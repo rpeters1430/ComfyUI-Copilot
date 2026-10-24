@@ -128,3 +128,63 @@ async def verify_openai_key(req):
             "data": False, 
             "message": error_message
         })
+
+SD_PROMPTS_COUNT = 5
+SD_PROMPTS_SYSTEM = (
+    "You write prompts for image generation models (Stable Diffusion, SDXL, Flux). "
+    f"Given the user's idea, return {SD_PROMPTS_COUNT} distinct prompt variations as a JSON array of strings "
+    "and nothing else. Each prompt is a comma-separated list of concrete descriptive phrases in English: "
+    "subject, style, lighting, composition and quality terms."
+)
+
+
+def parse_prompt_list(text: str) -> List[str]:
+    """Pull the JSON array of prompts out of a model reply (tolerates code fences and chatter)."""
+    start, end = text.find("["), text.rfind("]")
+    if start != -1 and end > start:
+        try:
+            items = json.loads(text[start:end + 1])
+            prompts = [str(item).strip() for item in items if str(item).strip()]
+            if prompts:
+                return prompts
+        except json.JSONDecodeError:
+            pass
+    # Fall back to one prompt per non-empty line
+    lines = [line.strip().lstrip("-*0123456789.) ").strip('"') for line in text.splitlines()]
+    return [line for line in lines if line and not line.startswith("```")]
+
+
+@server.PromptServer.instance.routes.post("/api/param_debug/generate_sd_prompts")
+async def generate_sd_prompts(request):
+    """GenLab "AI writing": turn a description into several image prompts with the user's LLM."""
+    from openai import AsyncOpenAI
+
+    from ..utils.llm_errors import describe_llm_error
+    from ..utils.llm_settings import LLMConfigurationError, resolve_llm_settings
+    from ..utils.request_utils import build_request_config, read_json
+
+    body = await read_json(request)
+    if body is None or not str(body.get("text") or "").strip():
+        return web.json_response({"success": False, "message": "Missing 'text'"}, status=400)
+
+    config = build_request_config(request, None, model_select=body.get("model_select"))
+    try:
+        base_url, api_key, model_name = resolve_llm_settings(config)
+    except LLMConfigurationError as e:
+        return web.json_response({"success": False, "message": str(e)})
+
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=60)
+    try:
+        completion = await client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": SD_PROMPTS_SYSTEM},
+                      {"role": "user", "content": body["text"]}],
+        )
+    except Exception as e:
+        log.error(f"generate_sd_prompts failed: {e}")
+        return web.json_response({"success": False, "message": describe_llm_error(e, base_url, model_name)})
+
+    prompts = parse_prompt_list(completion.choices[0].message.content or "")[:SD_PROMPTS_COUNT]
+    if not prompts:
+        return web.json_response({"success": False, "message": "The model returned no prompts"})
+    return web.json_response({"success": True, "data": prompts})

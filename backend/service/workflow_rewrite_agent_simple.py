@@ -16,7 +16,7 @@ from openai import OpenAI
 
 from ..agent_factory import create_agent
 from ..utils.globals import WORKFLOW_MODEL_NAME
-from ..agent_factory import resolve_llm_settings
+from ..utils.llm_settings import resolve_llm_settings, token_limit_kwargs
 from ..utils.request_context import get_config, get_rewrite_context, RewriteContext
 from ..utils.logger import log
 
@@ -97,7 +97,7 @@ ComfyUI API格式工作流是一个JSON对象，其中：
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_info}
             ],
-            max_tokens=8192,
+            **token_limit_kwargs(model_name, base_url, 8192),
             temperature=0.1,  # 降低随机性，确保输出一致性
             response_format=RewriteResponse  # 要求返回JSON格式
         )

@@ -11,4 +11,5 @@ openai-agents>=0.3.0
 fastmcp
 
 modelscope>=1.28.0
-urllib3>=1.26,<2.0
+# 1.x has known vulnerabilities; 2.x works with requests and modelscope
+urllib3>=2.8.0

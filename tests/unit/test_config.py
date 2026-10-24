@@ -1,6 +1,7 @@
 import pytest
 
 from backend import agent_factory
+from backend.utils import llm_settings
 from backend.agent_factory import LLMConfigurationError, resolve_llm_settings
 from backend.utils import globals as copilot_globals
 from backend.utils.key_utils import redact_config, workflow_config_adapt
@@ -36,7 +37,7 @@ def test_redact_config_hides_every_key():
 
 
 def test_resolve_llm_settings_precedence(monkeypatch):
-    monkeypatch.setattr(agent_factory, "DEFAULT_CHAT_MODEL", "env-default")
+    monkeypatch.setattr(llm_settings, "DEFAULT_CHAT_MODEL", "env-default")
     _, _, model = resolve_llm_settings({"model_select": "selected"}, "call-site")
     assert model == "selected"
     _, _, model = resolve_llm_settings({}, "call-site")
@@ -46,7 +47,7 @@ def test_resolve_llm_settings_precedence(monkeypatch):
 
 
 def test_resolve_llm_settings_without_model_raises(monkeypatch):
-    monkeypatch.setattr(agent_factory, "DEFAULT_CHAT_MODEL", None)
+    monkeypatch.setattr(llm_settings, "DEFAULT_CHAT_MODEL", None)
     with pytest.raises(LLMConfigurationError):
         resolve_llm_settings({}, None)
 
@@ -83,3 +84,33 @@ def test_rewrite_context_node_infos_is_writable():
     context = RewriteContext()
     context.node_infos["KSampler"] = "{}"
     assert RewriteContext().node_infos == {}
+
+
+@pytest.mark.parametrize("model,base_url,expected", [
+    ("gpt-4.1-mini", "https://api.openai.com/v1", "max_completion_tokens"),
+    ("o3-mini", "https://my-proxy.test/v1", "max_completion_tokens"),
+    ("openai/gpt-5", "https://openrouter.ai/api/v1", "max_completion_tokens"),
+    ("qwen3:8b", "http://localhost:11434/v1", "max_tokens"),
+    ("local-model", "http://localhost:1234/v1", "max_tokens"),
+])
+def test_token_limit_param(model, base_url, expected, monkeypatch):
+    monkeypatch.setattr(llm_settings, "TOKEN_LIMIT_PARAM", None)
+    assert llm_settings.token_limit_param(model, base_url) == expected
+
+
+def test_token_limit_param_override(monkeypatch):
+    monkeypatch.setattr(llm_settings, "TOKEN_LIMIT_PARAM", "max_tokens")
+    assert llm_settings.token_limit_param("gpt-5", "https://api.openai.com/v1") == "max_tokens"
+
+
+def test_create_agent_uses_completion_tokens_for_reasoning_models():
+    agent = agent_factory.create_agent(name="t", config={"model_select": "gpt-5-mini", "max_tokens": 100,
+                                                         "openai_base_url": "https://api.openai.com/v1"})
+    assert agent.model_settings.max_tokens is None
+    assert agent.model_settings.extra_args == {"max_completion_tokens": 100}
+
+
+def test_keyless_local_server_gets_placeholder_key():
+    # e.g. Ollama's OpenAI-compatible endpoint; the OpenAI client rejects an empty key
+    _, api_key, _ = resolve_llm_settings({"openai_base_url": "http://localhost:11434/v1", "model_select": "m"})
+    assert api_key

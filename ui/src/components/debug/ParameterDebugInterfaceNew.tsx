@@ -480,9 +480,9 @@ export const ParameterDebugInterface: React.FC<ParameterDebugInterfaceProps> = (
   }, [visible]);
 
   useEffect(() => {
-    if (!!isInitial.current) {
+    if (isInitial.current) {
       isInitial.current = false;
-      if (!!isProcessing) {
+      if (isProcessing) {
         let selectedImageNodeId: number | undefined = 0;
         const nodes = Object.values(app.graph._nodes_by_id) as ComfyNode[];
         const saveNodeIds: number[] = [];

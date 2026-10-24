@@ -25,7 +25,7 @@ export function DebugGuide({ content, name = 'Assistant', avatar, onAddMessage, 
 
     const response = useMemo(() => {
         try {
-            let response = JSON.parse(content);
+            const response = JSON.parse(content);
             return response;
         } catch (error) {
             console.error('Failed to parse message content:', error);
@@ -154,7 +154,7 @@ export function DebugGuide({ content, name = 'Assistant', avatar, onAddMessage, 
             let finalExt: any = null;
 
             // 创建新的 AbortController
-            if (!!abortControllerRef) {
+            if (abortControllerRef) {
                 abortControllerRef.current = new AbortController();
             }
 

@@ -39,7 +39,7 @@ const RewriteExpertModal: React.FC<IProps> = ({onClose}) => {
     if (id < 1) return
     try {
       const res = await deleteRewriteExpert(id)
-      if (!!res.success) {
+      if (res.success) {
         setModalContent('Delete success')
         queryGetRewriteExpertsList()
       }
@@ -98,7 +98,7 @@ const RewriteExpertModal: React.FC<IProps> = ({onClose}) => {
     }
     try {
       const res = await func(values)
-      if (!!res.success) {
+      if (res.success) {
         setModalContent(isAdd.current ? 'Add success' : 'Edit success')
         queryGetRewriteExpertsList()
         setEditData(null)

@@ -47,9 +47,6 @@ class ModelScopeGateway:
 
     def formatData(self, data: Any) -> Dict[str, Any]:
         inner = data.get('Model', {}) if isinstance(data, dict) else {}
-        path = data.get('Path') or inner.get('Path')
-        name = data.get('Name') or inner.get('Name')
-        revision = data.get('Revision') or inner.get('Revision')
         # size = self.get_model_size(path, name, revision)
         return {
             "Libraries": data.get("Libraries") or inner.get("Libraries"),
@@ -104,7 +101,7 @@ class ModelScopeGateway:
                 return size
             return 0
         except Exception as e:
-            log.error(f"ModelScope model size fetch failed for path={path}: name={name}: rversion={rversion}: {e}")
+            log.error(f"ModelScope model size fetch failed for path={path}: name={name}: revision={revision}: {e}")
             return 0
     
     def suggest(

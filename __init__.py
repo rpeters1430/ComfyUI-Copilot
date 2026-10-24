@@ -48,10 +48,20 @@ __all__ = ['NODE_CLASS_MAPPINGS']
 
 
 def _register_with_comfyui():
+    import importlib
+    import traceback
+
     import server
     from aiohttp import web
-    # Importing the controllers registers their routes on PromptServer
-    from .backend.controller import conversation_api, llm_api, expert_api  # noqa: F401
+
+    # Importing a controller registers its routes on PromptServer. Load each one on its own so
+    # a broken dependency disables only its routes, and the sidebar UI is still served.
+    for controller in ("conversation_api", "llm_api", "expert_api"):
+        try:
+            importlib.import_module(f".backend.controller.{controller}", __package__)
+        except Exception:
+            print(f"[ComfyUI-Copilot] Failed to load {controller}; its routes are unavailable:")
+            traceback.print_exc()
 
     dist_path = os.path.join(os.path.dirname(__file__), 'dist', 'copilot_web')
     if os.path.exists(dist_path):

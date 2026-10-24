@@ -5,7 +5,8 @@ from ..utils.key_utils import workflow_config_adapt
 from ..agent_factory import create_agent
 from agents.items import ItemHelpers
 from agents.run import Runner
-from ..utils.globals import WORKFLOW_MODEL_NAME, get_language
+from ..utils.globals import LLM_DEFAULT_BASE_URL, WORKFLOW_MODEL_NAME, get_language
+from ..utils.llm_errors import describe_llm_error
 from ..service.workflow_rewrite_tools import *
 from openai.types.responses import ResponseTextDeltaEvent
 
@@ -202,6 +203,8 @@ async def debug_workflow_errors(workflow_data: Dict[str, Any]):
     Yields:
         tuple: (text, ext) where text is accumulated text and ext is structured data
     """
+    current_text = ''
+    config = {}
     try:
         # Get session_id and config from request context
         session_id = get_session_id()
@@ -698,7 +701,9 @@ Start by validating the workflow to see its current state.""",
             
     except Exception as e:
         log.error(f"Error in debug_workflow_errors: {str(e)}")
-        error_message = f"\n\n× Error occurred during debugging: {str(e)}\n\n"
+        reason = describe_llm_error(e, config.get("openai_base_url") or LLM_DEFAULT_BASE_URL, config.get("model_select"))
+        # Keep whatever the agents already streamed
+        error_message = f"{current_text}\n\n× Error occurred during debugging: {reason}\n\n"
 
         ext_with_finished = {
             "finished": True

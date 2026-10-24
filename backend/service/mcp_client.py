@@ -6,13 +6,14 @@ FilePath: /comfyui_copilot/backend/service/mcp-client.py
 from ..service.workflow_rewrite_tools import get_current_workflow, search_node_local
 from ..utils.globals import (
     DISABLE_WORKFLOW_GEN,
+    LLM_DEFAULT_BASE_URL,
     MCP_CONNECT_TIMEOUT,
     REMOTE_MCP_URL,
     SEARCH_MCP_API_KEY,
     SEARCH_MCP_URL,
     get_comfyui_copilot_api_key,
 )
-from .. import core
+
 import asyncio
 import contextlib
 import json
@@ -37,6 +38,7 @@ from ..agent_factory import create_agent, LLMConfigurationError
 from ..service.workflow_rewrite_agent import create_workflow_rewrite_agent
 from ..service.message_memory import message_memory_optimize
 from ..utils.request_context import get_rewrite_context, get_session_id, get_config
+from ..utils.llm_errors import describe_llm_error
 from ..utils.logger import log
 from openai.types.responses import ResponseTextDeltaEvent
 from openai import APIConnectionError, APITimeoutError, RateLimitError
@@ -471,10 +473,12 @@ async def comfyui_agent_invoke(messages: List[Dict[str, Any]], images: List[Imag
     except Exception as e:
         log.error(f"Error in comfyui_agent_invoke: {e}\n{traceback.format_exc()}")
         prefix = f"{current_text}\n\n" if current_text else ""
+        config = get_config() or {}
+        message = describe_llm_error(e, config.get("openai_base_url") or LLM_DEFAULT_BASE_URL,
+                                     config.get("model_select"))
         if is_retryable_stream_error(e):
             # Keep the conversation open so the user can retry
-            yield (f"{prefix}A temporary connection error occurred: {e}. Please try your request again.",
-                   {"data": None, "finished": False})
+            yield (f"{prefix}{message} Please try your request again.", {"data": None, "finished": False})
         else:
-            yield (f"{prefix}I apologize, but an error occurred while processing your request: {e}",
+            yield (f"{prefix}An error occurred while processing your request: {message}",
                    {"data": None, "finished": True})

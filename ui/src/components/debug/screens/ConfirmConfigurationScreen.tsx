@@ -78,7 +78,7 @@ export const ConfirmConfigurationScreen: React.FC<ConfirmConfigurationScreenProp
   useEffect(() => {
     if (selectedNodes?.length > 0) {
       const node = selectedNodes?.find(node => node.type === "SaveImage" || node.type === "PreviewImage")
-      if (!!node) {
+      if (node) {
         setSelectedImageNodeId(node.id)
       }
     }

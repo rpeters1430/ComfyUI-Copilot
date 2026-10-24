@@ -3,8 +3,9 @@
 
 import { app } from "../../../utils/comfyapp";
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChatResponse, Message, Subgraph } from "../../../types/types";
+import { ChatResponse, Message, Node, Subgraph } from "../../../types/types";
 import { Network } from 'vis-network';
+import type { Data } from 'vis-network';
 import { WorkflowChatAPI } from "../../../apis/workflowChatApi";
 import { generateUUID } from "../../../utils/uuid";
 import { addNodeOnGraph } from "../../../utils/graphUtils";
@@ -38,11 +39,9 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
             font: {
                 size: 16,
                 color: '#FFFFFF',
-                face: 'arial',
-                bold: true
+                face: 'arial'
             },
-            margin: 12,
-            padding: 10,
+            margin: { top: 12, right: 12, bottom: 12, left: 12 },
             shape: 'box',
             widthConstraint: {
                 minimum: 100,
@@ -60,7 +59,8 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
             width: 2
         }));
 
-        return { nodes: visNodes, edges: visEdges };
+        const data: Data = { nodes: visNodes, edges: visEdges };
+        return data;
     };
 
     // 添加清理函数
@@ -82,13 +82,11 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
         const newNetwork = new Network(el, visData, {
             nodes: {
                 shape: 'box',
-                margin: 12,
-                padding: 10,
+                margin: { top: 12, right: 12, bottom: 12, left: 12 },
                 font: {
                     size: 16,
                     color: '#FFFFFF',
-                    face: 'arial',
-                    bold: true
+                    face: 'arial'
                 },
                 borderWidth: 2,
                 shadow: {
@@ -103,7 +101,8 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
                 width: 2,
                 smooth: {
                     enabled: true,
-                    type: 'straightCross'
+                    type: 'straightCross',
+                    roundness: 0.5
                 }
             },
             physics: {
@@ -177,7 +176,7 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
                     text: ``,
                     ext: [{
                         type: 'node_install_guide',
-                        data: nodeInfos.map(info => ({
+                        data: nodeInfos.map((info: Node) => ({
                             name: info.name,
                             repository_url: info.github_url
                         }))
@@ -219,8 +218,8 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
         const entryNodeId = entryNode?.id;
         console.log('[DownstreamSubgraphs] Entry node ID:', entryNodeId);
 
-        const nodeMap = {};
-        if (entryNodeId !== null) {
+        const nodeMap: Record<number, any> = {};
+        if (entryNodeId !== undefined) {
             nodeMap[entryNodeId] = selectedNode;
         }
         
@@ -229,7 +228,7 @@ export function DownstreamSubgraphs({ content, name = 'Assistant', avatar, onAdd
         try {
             for (const node of nodes) {
                 if (node.id !== entryNodeId) {
-                    const posEntryOld = entryNode?.pos;
+                    const posEntryOld = entryNode?.pos ?? [0, 0];
                     const posEntryNew = [selectedNode._pos[0], selectedNode._pos[1]];
                     const nodePosNew = [
                         node.pos[0] + posEntryNew[0] - posEntryOld[0], 

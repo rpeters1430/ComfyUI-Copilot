@@ -18,7 +18,8 @@ const __dirname = dirname(__filename);
 
 // 在 dist/copilot_web 目录下查找所有 JS 文件
 const distDir = path.resolve(__dirname, '../../dist/copilot_web');
-const files = glob.sync(`${distDir}/**/*.js`);
+// glob needs forward slashes; a Windows path with backslashes silently matches nothing
+const files = glob.sync("**/*.js", { cwd: distDir, absolute: true });
 
 files.forEach(file => {
     console.log('start modify', file)

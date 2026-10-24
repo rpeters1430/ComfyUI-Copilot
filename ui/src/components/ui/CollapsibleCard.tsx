@@ -5,12 +5,13 @@ interface IProps {
   title?: string | React.ReactNode;
   className?: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
 }
 
 const CollapsibleCard: React.FC<IProps> = (props) => {
-  const { title = '', className = '', children } = props;
+  const { title = '', className = '', children, defaultOpen = false } = props;
   
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   
   return (
     <div className={`border border-gray-200 dark:border-gray-600 rounded-lg p-4 ${className}`}>

@@ -187,7 +187,7 @@ export const ChatInput = forwardRef<ChatInputRef, ChatInputProps>(({
         // 一天之内使用当前缓存
         if (!!Number(time) && currentTime - Number(time) < 1000 * 60 * 60 * 24) {
             const list = getLocalStorage(LocalStorageKeys.MODELS_POP_VIEW_LIST);
-            if (!!list) {
+            if (list) {
                 updateModels(JSON.parse(list));
             }
             return;

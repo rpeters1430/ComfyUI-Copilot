@@ -14,7 +14,7 @@ from openai import OpenAI
 
 from ..utils.key_utils import workflow_config_adapt
 from ..utils.globals import WORKFLOW_MODEL_NAME
-from ..agent_factory import resolve_llm_settings
+from ..utils.llm_settings import resolve_llm_settings
 from ..utils.request_context import get_config
 from ..utils.logger import log
 

@@ -74,7 +74,7 @@ const ModelOption: React.FC<IProps> = (props) => {
   useEffect(() => {
     if (!modelPaths || modelPaths.length === 0) 
       return
-    let selectedPaths: Record<number, string> = {}
+    const selectedPaths: Record<number, string> = {}
     modelList?.forEach(item => { 
       const index = modelPaths.findIndex((path: string) => item.model_type === path)
       selectedPaths[item.Id] = modelPaths[index === -1 ? 0 : index] || ''
@@ -88,7 +88,7 @@ const ModelOption: React.FC<IProps> = (props) => {
       message_type: 'model',
       data: { id, model_id: modelId, model_type: modelType || selectedPathMap[id] }
     })
-    let body: Record<string, string | number> = {
+    const body: Record<string, string | number> = {
       id,
       model_id: modelId,
       model_type: !!modelType && modelType !== '' ? modelType : selectedPathMap[id],

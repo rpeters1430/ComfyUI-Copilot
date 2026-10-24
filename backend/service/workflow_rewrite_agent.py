@@ -43,7 +43,6 @@ def create_workflow_rewrite_agent():
     """创建workflow_rewrite_agent实例"""
     
     language = get_language()
-    session_id = get_session_id() or "unknown_session"
     config = get_config()
     config = workflow_config_adapt(config)
 

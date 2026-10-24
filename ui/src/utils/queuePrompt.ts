@@ -217,7 +217,7 @@ export function getOnlyOneImageNode() {
   }
 }
 
-export async function getOutputImageByPromptId(promptId: string, nodeId: Number): Promise<string | null> {
+export async function getOutputImageByPromptId(promptId: string, nodeId: number): Promise<string | null> {
     const outputImages = await getOutputImagesByPromptId(promptId);
     // If no images were found, return an empty array
     if (Object.keys(outputImages).length === 0) {
