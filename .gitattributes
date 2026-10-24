@@ -1,0 +1,10 @@
+# Keep LF everywhere so builds on Windows produce the same asset hashes as CI on Linux
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.eot binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.ico binary

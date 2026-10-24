@@ -10,11 +10,12 @@
  */
 
 import type { LGraph } from '@comfyorg/litegraph';
-import type { 
-  ComfyWorkflowJSON, 
-  ComfyApiWorkflow,
-  ComfyApp 
-} from '@comfyorg/comfyui-frontend-types';
+import type { ComfyApp } from '@comfyorg/comfyui-frontend-types';
+
+// The package doesn't export its workflow schema types (its .d.ts imports them from a file it
+// doesn't ship), so take them from the ComfyApp methods that accept them.
+type ComfyApiWorkflow = Parameters<ComfyApp['loadApiJson']>[0];
+type ComfyWorkflowJSON = NonNullable<Parameters<ComfyApp['loadGraphData']>[0]>;
 import { getObjectInfoByClass } from '../apis/comfyApiCustom';
 
 // Assuming these are available in the global scope when running as an extension
@@ -299,7 +300,7 @@ export async function apiToWorkflow(apiData: ComfyApiWorkflow): Promise<ComfyWor
           
           if (!isConnectionInput) {
             // This is a widget input
-            if (widgetInputs.hasOwnProperty(inputName)) {
+            if (Object.prototype.hasOwnProperty.call(widgetInputs, inputName)) {
               // Use provided value
               const value = widgetInputs[inputName];
               node.widgets_values.push(
@@ -357,7 +358,7 @@ export async function apiToWorkflow(apiData: ComfyApiWorkflow): Promise<ComfyWor
           const tempNode = new nodeType();
           if (tempNode.widgets) {
             for (const widget of tempNode.widgets) {
-              if (widgetInputs.hasOwnProperty(widget.name)) {
+              if (Object.prototype.hasOwnProperty.call(widgetInputs, widget.name)) {
                 const value = widgetInputs[widget.name];
                 node.widgets_values.push(
                   value && typeof value === 'object' && '__value__' in value

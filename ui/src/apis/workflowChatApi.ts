@@ -15,8 +15,10 @@ import { Message, ChatResponse, OptimizedWorkflowRequest, OptimizedWorkflowRespo
 import { generateUUID } from '../utils/uuid';
 import { encryptWithRsaPublicKey } from '../utils/crypto';
 import { app } from '../utils/comfyapp';
+import { getLocalStorage, LocalStorageKeys } from '../utils/localStorageManager';
 
 const BASE_URL = config.apiBaseUrl
+const REMOTE_SERVER_ENABLED = config.remoteServerEnabled
 
 const getApiKey = () => {
     const apiKey = localStorage.getItem('chatApiKey');
@@ -50,6 +52,18 @@ const getOpenAiConfig = () => {
     };
 };
 
+// The user's LLM settings, sent only to the local plugin backend (never to a remote server)
+const addLocalLlmHeaders = (headers: Record<string, string>) => {
+    const { openaiApiKey, openaiBaseUrl, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel } = getOpenAiConfig();
+    if (openaiApiKey.trim()) headers['Openai-Api-Key'] = openaiApiKey;
+    if (openaiBaseUrl.trim()) headers['Openai-Base-Url'] = openaiBaseUrl;
+    if (workflowLLMApiKey) headers['Workflow-LLM-Api-Key'] = workflowLLMApiKey;
+    if (workflowLLMBaseUrl) headers['Workflow-LLM-Base-Url'] = workflowLLMBaseUrl;
+    if (workflowLLMModel) headers['Workflow-LLM-Model'] = workflowLLMModel;
+};
+
+const getSelectedModel = () => getLocalStorage(LocalStorageKeys.MODELS_POP_VIEW_SELECTED) || undefined;
+
 // Get browser language
 const getBrowserLanguage = () => {
     return navigator.language || 'zh-CN'; // Default to Chinese if language is not available
@@ -69,6 +83,9 @@ export namespace WorkflowChatAPI {
   export async function trackEvent(
     request: TrackEventRequest
   ): Promise<void> {
+    if (!REMOTE_SERVER_ENABLED) {
+      return Promise.resolve();
+    }
     try {
       // Use non-blocking fetch to avoid interrupting the main flow
       const apiKey = getApiKey();
@@ -147,7 +164,7 @@ export namespace WorkflowChatAPI {
     try {
       const apiKey = getApiKey();
       const browserLanguage = app.extensionManager.setting.get('Comfy.Locale');
-      const { openaiApiKey, openaiBaseUrl, rsaPublicKey, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel } = getOpenAiConfig();
+      const { openaiBaseUrl, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel } = getOpenAiConfig();
       // Generate a unique message ID for this chat request
       const messageId = generateUUID();
 
@@ -191,7 +208,7 @@ export namespace WorkflowChatAPI {
       });
 
       // Create current user message with OpenAI multimodal format
-      let currentUserMessage: any = {
+      const currentUserMessage: any = {
         role: 'user',
         content: prompt
       };
@@ -224,7 +241,7 @@ export namespace WorkflowChatAPI {
       const allOpenaiMessages = [...openaiMessages, currentUserMessage];
 
       // Handle ext parameter
-      let finalExt = ext ? (Array.isArray(ext) ? ext : [ext]) : [];
+      const finalExt = ext ? (Array.isArray(ext) ? ext : [ext]) : [];
       
       // Save current workflow checkpoint before invoking if userMessageId is provided
       let workflowCheckpointId: number | null = null;
@@ -256,23 +273,16 @@ export namespace WorkflowChatAPI {
         'Accept-Language': browserLanguage,
       };
       
-      // Add OpenAI configuration headers if available
-      if (openaiApiKey && openaiApiKey.trim() !== '' && rsaPublicKey) {
-        try {
-          headers['Openai-Base-Url'] = openaiBaseUrl;
-        } catch (error) {
-          console.error('Error encrypting OpenAI API key:', error);
-        }
-      }
-      // Add Workflow LLM headers if available
-      if (workflowLLMBaseUrl) {
-        headers['Workflow-LLM-Base-Url'] = workflowLLMBaseUrl;
-      }
-      if (workflowLLMApiKey) {
-        headers['Workflow-LLM-Api-Key'] = workflowLLMApiKey;
-      }
-      if (workflowLLMModel) {
-        headers['Workflow-LLM-Model'] = workflowLLMModel;
+      // Intent requests (node search, model recommendations) used to go to the hosted server.
+      // Without one, everything goes to the local backend, which answers with the user's own LLM.
+      const useRemoteServer = REMOTE_SERVER_ENABLED && !!intent;
+      if (useRemoteServer) {
+        if (openaiBaseUrl) headers['Openai-Base-Url'] = openaiBaseUrl;
+        if (workflowLLMBaseUrl) headers['Workflow-LLM-Base-Url'] = workflowLLMBaseUrl;
+        if (workflowLLMApiKey) headers['Workflow-LLM-Api-Key'] = workflowLLMApiKey;
+        if (workflowLLMModel) headers['Workflow-LLM-Model'] = workflowLLMModel;
+      } else {
+        addLocalLlmHeaders(headers);
       }
       
       // Create controller and combine with external signal if provided
@@ -287,12 +297,7 @@ export namespace WorkflowChatAPI {
         });
       }
 
-      let chatUrl = `/api/chat/invoke`
-      if(intent && intent !== '') {
-        chatUrl = `${BASE_URL}/api/chat/invoke`
-      } else {
-        headers['Openai-Api-Key'] = openaiApiKey;
-      }
+      const chatUrl = useRemoteServer ? `${BASE_URL}/api/chat/invoke` : `/api/chat/invoke`;
       const response = await fetch(chatUrl, {
         method: 'POST',
         headers: headers,
@@ -423,6 +428,12 @@ export namespace WorkflowChatAPI {
   }
 
   export async function batchGetNodeInfo(nodeTypes: string[]): Promise<any> {
+    if (!REMOTE_SERVER_ENABLED) {
+      // Install details for missing nodes came from the hosted server; list them by name only
+      return nodeTypes.map(name => ({
+        name, description: '', image: '', github_url: '', github_stars: 0, from_index: 0, to_index: 0,
+      })) as Node[];
+    }
     const apiKey = getApiKey();
     const browserLanguage = getBrowserLanguage();
     const { openaiApiKey, openaiBaseUrl, rsaPublicKey, workflowLLMApiKey, workflowLLMBaseUrl } = getOpenAiConfig();
@@ -489,6 +500,9 @@ export namespace WorkflowChatAPI {
   }
 
   export async function fetchAnnouncement(): Promise<string> {
+    if (!REMOTE_SERVER_ENABLED) {
+      return '';
+    }
     try {
       const apiKey = getApiKey();
       const browserLanguage = getBrowserLanguage();
@@ -541,11 +555,18 @@ export namespace WorkflowChatAPI {
           'Accept-Language': browserLanguage,
         };
         
-        const response = await fetch(`${BASE_URL}/api/param_debug/generate_sd_prompts`, {
+        if (!REMOTE_SERVER_ENABLED) {
+          addLocalLlmHeaders(headers);
+        }
+        const promptsUrl = REMOTE_SERVER_ENABLED
+          ? `${BASE_URL}/api/param_debug/generate_sd_prompts`
+          : '/api/param_debug/generate_sd_prompts';
+        const response = await fetch(promptsUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            text: text
+            text: text,
+            model_select: getSelectedModel(),
           }),
         });
         
@@ -666,7 +687,6 @@ export namespace WorkflowChatAPI {
     abortSignal?: AbortSignal
   ): AsyncGenerator<ChatResponse> {
     try {
-      const { openaiApiKey, openaiBaseUrl, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel } = getOpenAiConfig();
       const browserLanguage = app.extensionManager.setting.get('Comfy.Locale');
       const session_id = localStorage.getItem("sessionId") || null;
       const apiKey = getApiKey();
@@ -680,21 +700,8 @@ export namespace WorkflowChatAPI {
         'Accept-Language': browserLanguage,
       };
       
-      // Add OpenAI configuration headers if available
-      if (openaiApiKey && openaiApiKey.trim() !== '') {
-        headers['Openai-Api-Key'] = openaiApiKey;
-        headers['Openai-Base-Url'] = openaiBaseUrl;
-      }
-      // Add Workflow LLM headers if available
-      if (workflowLLMBaseUrl) {
-        headers['Workflow-LLM-Base-Url'] = workflowLLMBaseUrl;
-      }
-      if (workflowLLMApiKey) {
-        headers['Workflow-LLM-Api-Key'] = workflowLLMApiKey;
-      }
-      if (workflowLLMModel) {
-        headers['Workflow-LLM-Model'] = workflowLLMModel;
-      }
+      // Base URL is sent even without an API key (LMStudio/Ollama need none)
+      addLocalLlmHeaders(headers);
       // Create controller and combine with external signal if provided
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes timeout
@@ -712,7 +719,9 @@ export namespace WorkflowChatAPI {
         headers: headers,
         body: JSON.stringify({
           session_id: session_id,
-          workflow_data: workflowData['output']
+          workflow_data: workflowData['output'],
+          // Used when no separate workflow model is configured
+          model_select: getSelectedModel(),
         }),
         signal: controller.signal
       });

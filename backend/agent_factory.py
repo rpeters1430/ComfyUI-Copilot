@@ -8,9 +8,7 @@ Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查�
 '''
 
 try:
-    from agents import Agent, OpenAIChatCompletionsModel, ModelSettings, Runner, set_tracing_disabled, set_default_openai_api
-    if not hasattr(__import__('agents'), 'Agent'):
-        raise ImportError
+    from agents import Agent, OpenAIChatCompletionsModel, ModelSettings, set_tracing_disabled, set_default_openai_api
 except Exception:
     # Give actionable guidance without crashing obscurely
     raise ImportError(
@@ -18,47 +16,19 @@ except Exception:
         "Please uninstall legacy RL 'agents' (and tensorflow/gym if pulled transitively) and install openai-agents. "
         "Commands:\n"
         "  python -m pip uninstall -y agents gym tensorflow\n"
-        "  python -m pip install -U openai-agents\n\n"
-        "Alternatively, keep both by setting COMFYUI_COPILOT_PREFER_OPENAI_AGENTS=1 so this plugin prefers openai-agents."
+        "  python -m pip install -U openai-agents"
     )
-from .utils.globals import (
-    LLM_DEFAULT_BASE_URL,
-    DEFAULT_CHAT_MODEL,
-    ENABLE_TRACING,
-    get_comfyui_copilot_api_key,
-    is_lmstudio_url,
+from .utils.globals import ENABLE_TRACING
+from .utils.llm_settings import (  # noqa: F401  (re-exported for existing callers)
+    LLMConfigurationError,
+    resolve_llm_settings,
+    token_limit_kwargs,
+    token_limit_param,
 )
 from openai import AsyncOpenAI
 
 set_default_openai_api("chat_completions")
 set_tracing_disabled(not ENABLE_TRACING)
-
-
-class LLMConfigurationError(ValueError):
-    """Raised when no usable model/endpoint can be resolved for an agent."""
-
-
-def resolve_llm_settings(config: dict | None, model: str | None = None) -> tuple[str, str, str]:
-    """Resolve (base_url, api_key, model_name) for an agent.
-
-    Precedence for the model: the request's model_select, then the call-site
-    ``model``, then the CC_DEFAULT_MODEL env var.
-    """
-    config = config or {}
-    base_url = config.get("openai_base_url") or LLM_DEFAULT_BASE_URL
-    api_key = config.get("openai_api_key") or get_comfyui_copilot_api_key() or ""
-
-    # LMStudio typically doesn't require an API key, use a placeholder
-    if not api_key and is_lmstudio_url(base_url):
-        api_key = "lmstudio-local"
-
-    model_name = config.get("model_select") or model or DEFAULT_CHAT_MODEL
-    if not model_name:
-        raise LLMConfigurationError(
-            "No model selected. Choose a model in the Copilot settings, or set "
-            "CC_DEFAULT_MODEL in ComfyUI-Copilot/.env."
-        )
-    return base_url, api_key, model_name
 
 
 def create_agent(**kwargs) -> Agent:
@@ -77,5 +47,10 @@ def create_agent(**kwargs) -> Agent:
     model = OpenAIChatCompletionsModel(model_name, openai_client=client)
 
     if config.get("max_tokens"):
-        return Agent(model=model, model_settings=ModelSettings(max_tokens=config["max_tokens"]), **kwargs)
+        limit = config["max_tokens"]
+        if token_limit_param(model_name, base_url) == "max_completion_tokens":
+            settings = ModelSettings(extra_args={"max_completion_tokens": limit})
+        else:
+            settings = ModelSettings(max_tokens=limit)
+        return Agent(model=model, model_settings=settings, **kwargs)
     return Agent(model=model, **kwargs)

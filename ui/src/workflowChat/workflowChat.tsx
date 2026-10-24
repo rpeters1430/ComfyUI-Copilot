@@ -39,6 +39,7 @@ import useLanguage from "../hooks/useLanguage";
 import StartLink from "../components/ui/StartLink";
 import StartPopView from "../components/ui/StartPopView";
 import { LocalStorageKeys, setLocalStorage } from "../utils/localStorageManager";
+import { readFileAsDataUrl } from "../utils/fileUtils";
 import TabButton from "../components/ui/TabButton";
 
 const BASE_URL = config.apiBaseUrl
@@ -418,7 +419,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
 
         try {
             const modelExt = { type: "model_select", data: [selectedModel] };
-            let aiMessageId = generateUUID(); // 生成一个固定的消息ID
+            const aiMessageId = generateUUID(); // 生成一个固定的消息ID
             let isFirstResponse = true;
 
             for await (const response of WorkflowChatAPI.streamInvokeServer(
@@ -498,7 +499,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
 
         try {
             const modelExt = { type: "model_select", data: [selectedModel] };
-            let aiMessageId = generateUUID();
+            const aiMessageId = generateUUID();
             let isFirstResponse = true;
 
             for await (const response of WorkflowChatAPI.streamInvokeServer(
@@ -612,7 +613,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
         abortControllerRef.current = new AbortController();
 
         try {
-            let aiMessageId = generateUUID();
+            const aiMessageId = generateUUID();
             let isFirstResponse = true;
 
             for await (const response of WorkflowChatAPI.streamInvokeServer(
@@ -698,7 +699,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
             }
         }
     
-        if (!!selectedNode[0]) {
+        if (selectedNode[0]) {
             findUpstreamNodes(selectedNode[0], 0);
             return [{"type": "upstream_node_types", "data": Array.from(nodeTypeSet)}];
         }
@@ -768,8 +769,15 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
     };
 
     const uploadImage = async (file: File, id: string) => {
+        if (!config.remoteServerEnabled) {
+            // No hosted storage: send the image inline as a data URL, which OpenAI-compatible
+            // vision models accept. Still copy it into ComfyUI's input folder for workflows.
+            const url = await readFileAsDataUrl(file);
+            await WorkflowChatAPI.uploadImage(file);
+            return { url, file, id };
+        }
         const formData = new FormData();
-        formData.append('file', file); 
+        formData.append('file', file);
         const response = await fetch(`${BASE_URL}/api/chat/imgfile2oss`, {
             method: 'POST',
             body: formData
@@ -799,7 +807,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
         setUploadedImages(prev => [...prev, ...newImages]);
         Promise.all(promises).then((data) => {
             data?.forEach(item => {
-                if (!!item) {
+                if (item) {
                     const index = newImages.findIndex(img => img.id === item.id)
                     newImages.splice(index, 1, {
                         id: item.id,

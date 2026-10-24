@@ -49,11 +49,26 @@ export interface NodeInfo {
   missing_nodes: Node[];
 }
 
+export interface SubgraphNode {
+    id: number;
+    type: string;
+    pos: [number, number];
+    [key: string]: any;
+}
+
+export interface SubgraphLink {
+    origin_id: number;
+    origin_slot: number;
+    target_id: number;
+    target_slot: number;
+    [key: string]: any;
+}
+
 export interface Subgraph {
     id: number;
     name: string; 
     description: string;
-    json: Record<string, any>;
+    json: { nodes: SubgraphNode[]; links: SubgraphLink[]; [key: string]: any };
     tags: string[];
 }
 

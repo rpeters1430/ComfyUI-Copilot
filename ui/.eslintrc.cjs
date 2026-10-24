@@ -9,12 +9,18 @@ module.exports = {
   ],
   ignorePatterns: ['dist', '.eslintrc.cjs'],
   parser: '@typescript-eslint/parser',
-  plugins: ['react-refresh', '@typescript-eslint', 'prettier'],
+  plugins: ['react-refresh', '@typescript-eslint'],
   rules: {
     'react-refresh/only-export-components': [
       'warn',
       { allowConstantExport: true },
     ],
-    'prettier/prettier': ['error'],
+    // The inherited code was never formatted or type-tightened. These stay visible as warnings
+    // instead of blocking CI; formatting (`npm run format`) is a separate, opt-in change.
+    '@typescript-eslint/no-explicit-any': 'warn',
+    '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    '@typescript-eslint/ban-types': 'warn',
+    '@typescript-eslint/no-namespace': 'warn',
+    '@typescript-eslint/no-loss-of-precision': 'warn',
   },
 }

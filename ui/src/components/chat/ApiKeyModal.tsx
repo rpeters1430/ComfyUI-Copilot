@@ -127,7 +127,10 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
             }
         };
         
-        fetchPublicKey();
+        // The key only encrypts credentials sent to the hosted server
+        if (config.remoteServerEnabled) {
+            fetchPublicKey();
+        }
     }, [initialApiKey]);
 
     const handleVerifyOpenAiKey = async () => {
@@ -145,7 +148,7 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
             return;
         }
         
-        if (!rsaPublicKey && !isLMStudio) {
+        if (config.remoteServerEnabled && !rsaPublicKey && !isLMStudio) {
             setVerificationResult({
                 success: false,
                 message: 'RSA public key not available. Please try again later.'
@@ -262,7 +265,7 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
         setLoading(false);
         setModalOpen(true)
         start();
-        if (!!data?.data) {
+        if (data?.data) {
             setModalContent('Send email successfully, please check your email');
         } else {
             setModalContent(data?.message || 'Send email failed');
@@ -333,6 +336,8 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
             <div className="bg-white dark:bg-gray-800 rounded-xl p-8 w-[480px] max-h-[80vh] shadow-2xl overflow-y-auto">
                 <h2 className="text-xl text-gray-900 dark:text-white font-semibold mb-6">Set API Key</h2>
                 
+                {/* Account signup and the Copilot API key only apply to the hosted server */}
+                {config.remoteServerEnabled && <>
                 <div className="mb-6">
                     <div className='flex flex-row justify-between'>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -402,9 +407,11 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
                         </svg>
                     </StartLink>
                 </div>
+                </>}
                 
                 {/* LLM Configuration */}
                 <CollapsibleCard 
+                    defaultOpen={!config.remoteServerEnabled}
                     title={<h3 className="text-sm text-gray-900 dark:text-white font-medium">LLM Configuration (OpenAI / LMStudio / Custom)</h3>}
                     className='mb-4'
                 >

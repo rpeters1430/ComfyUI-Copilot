@@ -21,7 +21,7 @@ const useCountDown = (time: number, autoStart = false) => {
   }
 
   const stop = () => {
-    if (!!timer.current) {
+    if (timer.current) {
       clearInterval(timer.current);
       timer.current = null;
     }

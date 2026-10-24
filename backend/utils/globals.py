@@ -140,6 +140,8 @@ WORKFLOW_LLM_API_KEY = os.getenv("WORKFLOW_LLM_API_KEY") or None
 WORKFLOW_LLM_BASE_URL = os.getenv("WORKFLOW_LLM_BASE_URL") or None
 WORKFLOW_LLM_MODEL = os.getenv("WORKFLOW_LLM_MODEL") or WORKFLOW_MODEL_NAME
 DISABLE_WORKFLOW_GEN = _env_flag("DISABLE_WORKFLOW_GEN")
+# "max_tokens" or "max_completion_tokens"; unset = picked per endpoint/model
+TOKEN_LIMIT_PARAM = (os.getenv("CC_TOKEN_LIMIT_PARAM") or "").strip() or None
 # openai-agents tracing uploads run traces (prompts, workflows) to OpenAI. Opt-in only.
 ENABLE_TRACING = _env_flag("COPILOT_ENABLE_TRACING")
 

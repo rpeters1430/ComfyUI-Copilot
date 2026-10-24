@@ -320,7 +320,7 @@ export function WorkflowOption({ content, name = 'Assistant', avatar, latestInpu
                 </div>
                 <div className='aspect-[3/4] rounded-lg overflow-hidden flex-1 w-full'>
                     {
-                        !!workflow.image ? <img
+                        workflow.image ? <img
                             src={workflow.image}
                             alt={workflow.name}
                             className="w-full h-full object-cover"

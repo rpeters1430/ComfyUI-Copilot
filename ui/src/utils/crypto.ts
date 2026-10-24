@@ -3,15 +3,6 @@
 
 import { config } from '../config';
 
-// 添加 JSEncrypt 的类型定义
-declare module 'jsencrypt' {
-  export default class JSEncrypt {
-    constructor();
-    setPublicKey(key: string): void;
-    encrypt(data: string): string | false;
-  }
-}
-
 import JSEncrypt from 'jsencrypt';
 
 /**

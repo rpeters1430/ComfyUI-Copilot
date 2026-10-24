@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Pytest
+        run: python -m pytest -q
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Committed dist/ matches the source
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            echo "::error::dist/copilot_web is out of date. Run 'npm run build' in ui/ and commit dist/."
+            git status --short -- dist
+            exit 1
+          fi
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    # Reports known vulnerabilities without blocking merges; Dependabot opens the fixes
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (runtime dependencies)
+        working-directory: ui
+        run: npm audit --omit=dev --audit-level=high

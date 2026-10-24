@@ -8,59 +8,35 @@ from typing import Optional, TypedDict, List, Union
 import threading
 from collections import defaultdict
 
-from ..utils.globals import set_language, apply_llm_env_defaults
-from ..utils.auth_utils import extract_api_key
+from ..utils.globals import set_language
+from ..utils.request_utils import build_request_config, get_llm_config_from_headers, get_model_select, read_json  # noqa: F401
 from ..utils.key_utils import redact_config
 import server
 from aiohttp import web
 import os
 import shutil
 
-from ..service.debug_agent import debug_workflow_errors
 from ..dao.workflow_table import save_workflow_data, get_workflow_data_by_id, update_workflow_ui_by_id
-from ..service.mcp_client import comfyui_agent_invoke
 from ..utils.request_context import set_request_context, get_session_id
 from ..utils.logger import log
 from ..utils.modelscope_gateway import ModelScopeGateway
 import folder_paths
 
-
-def get_llm_config_from_headers(request):
-    """Extract LLM-related configuration from request headers."""
-    return {
-        "openai_api_key": request.headers.get('Openai-Api-Key'),
-        "openai_base_url": request.headers.get('Openai-Base-Url'),
-        # Workflow LLM settings (optional, used by tools/agents that need a different LLM)
-        "workflow_llm_api_key": request.headers.get('Workflow-LLM-Api-Key'),
-        "workflow_llm_base_url": request.headers.get('Workflow-LLM-Base-Url'),
-        "workflow_llm_model": request.headers.get('Workflow-LLM-Model'),
-    }
-
-
-def build_request_config(request, session_id, **extra):
-    """Request-scoped LLM config: request headers/body > .env > code defaults."""
-    config = {
-        "session_id": session_id,
-        "copilot_api_key": extract_api_key(request),
-        **get_llm_config_from_headers(request),
-        **extra,
-    }
-    return apply_llm_env_defaults(config)
-
-
-def get_model_select(ext) -> Optional[str]:
-    for item in ext or []:
-        if isinstance(item, dict) and item.get('type') == 'model_select' and item.get('data'):
-            return item['data'][0]
-    return None
-
-
-async def read_json(request):
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    return body if isinstance(body, dict) else None
+# The agent services need openai-agents. If it is missing or broken, the other
+# routes (checkpoints, downloads, model lists) keep working and chat/debug
+# replies explain what to install instead of the whole plugin failing to load.
+try:
+    from ..service.debug_agent import debug_workflow_errors
+    from ..service.mcp_client import comfyui_agent_invoke
+    AGENTS_UNAVAILABLE = None
+except Exception as agents_error:
+    log.error(f"Copilot agents are unavailable: {agents_error}")
+    AGENTS_UNAVAILABLE = (
+        "Copilot's AI agents could not be loaded, so chat and debug are disabled.\n\n"
+        f"```\n{agents_error}\n```\n\n"
+        "Install the dependencies into ComfyUI's Python environment and restart ComfyUI:\n\n"
+        "```\npython -m pip install -r custom_nodes/ComfyUI-Copilot/requirements.txt\n```"
+    )
 
 
 def resolve_model_dest_dir(dest_dir: Optional[str], model_type: str) -> str:
@@ -122,6 +98,14 @@ class ChatResponse(TypedDict):
     type: str  # 返回的类型
     format: str  # 返回的格式
     ext: Optional[List[ExtItem]]  # 扩展信息
+
+async def finish_with_message(response, session_id, text):
+    """Write a single final chat message to an already-prepared stream and close it."""
+    message = ChatResponse(session_id=session_id, text=text, finished=True,
+                           type="message", format="markdown", ext=None)
+    await response.write(json.dumps(message).encode() + b"\n")
+    await response.write_eof()
+    return response
 
 # 下载进度回调类
 class DownloadProgressCallback:
@@ -235,9 +219,9 @@ async def invoke_chat(request):
     await response.prepare(request)
 
     session_id = req_json.get('session_id')
-    prompt = req_json.get('prompt')
+    if AGENTS_UNAVAILABLE:
+        return await finish_with_message(response, session_id, AGENTS_UNAVAILABLE)
     images = req_json.get('images', [])
-    intent = req_json.get('intent')
     ext = req_json.get('ext')
     historical_messages = req_json.get('messages', [])
     workflow_checkpoint_id = req_json.get('workflow_checkpoint_id')
@@ -258,7 +242,6 @@ async def invoke_chat(request):
 
     # 图片处理已移至前端，图片信息现在包含在历史消息的OpenAI格式中
     # 保留空的处理逻辑以向后兼容，但实际不再使用
-    processed_images = []
     if images and len(images) > 0:
         log.info(f"Note: Received {len(images)} images in legacy format, but using OpenAI message format instead")
 
@@ -283,7 +266,6 @@ async def invoke_chat(request):
         accumulated_text = ""
         ext_data = None
         finished = True  # Default to True
-        has_sent_response = False
         previous_text_length = 0
         
         log.info(f"config: {redact_config(config)}")
@@ -509,6 +491,8 @@ async def invoke_debug(request):
     await response.prepare(request)
 
     session_id = req_json.get('session_id')
+    if AGENTS_UNAVAILABLE:
+        return await finish_with_message(response, session_id, AGENTS_UNAVAILABLE)
     workflow_data = req_json.get('workflow_data')
     
     # Debug agents use the workflow model (Workflow-LLM-Model header / WORKFLOW_LLM_MODEL),

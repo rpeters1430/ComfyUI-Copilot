@@ -6,7 +6,6 @@ This directory contains the Parameter Debug Interface components for ComfyUI Cop
 
 - `ParameterDebugInterfaceNew.tsx` - Original large component (refactored to use extracted utilities)
 - `ParameterDebugInterfaceV2.tsx` - Enhanced wrapper component with better architecture
-- `index.ts` - Central export file for all components and utilities
 - `types/` - Type definitions extracted from the original component
   - `parameterDebugTypes.ts` - Common type definitions
 - `utils/` - Utility functions extracted from the original component

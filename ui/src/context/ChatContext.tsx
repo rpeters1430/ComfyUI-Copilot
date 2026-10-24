@@ -120,9 +120,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const modelDownloadPolling = async () => {
     if (currentDownloadingId?.current?.length > 0) {
       const responses = await Promise.all(currentDownloadingId?.current?.map(id => getProgress(id)))
-      let map: Record<string, DownloadProgress> = {}
+      const map: Record<string, DownloadProgress> = {}
       responses?.forEach((response) => {
-        if (!!response) {
+        if (response) {
           map[response.id] = {
             id: response.id,
             percentage: response.percentage,
