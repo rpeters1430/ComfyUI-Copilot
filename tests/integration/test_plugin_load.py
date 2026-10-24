@@ -48,7 +48,7 @@ def test_plugin_registers_all_routes():
     assert loaded["web_directory"] == "entry"
     assert not loaded["agents_unavailable"]
     assert "POST /api/chat/invoke" in loaded["routes"]
-    assert len(loaded["routes"]) == 23
+    assert len(loaded["routes"]) == 28
 
 
 def test_plugin_loads_without_openai_agents():

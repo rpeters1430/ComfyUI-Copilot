@@ -148,6 +148,8 @@ TOOL_MODE = (os.getenv("COPILOT_TOOL_MODE") or "auto").strip().lower()
 TOKEN_LIMIT_PARAM = (os.getenv("CC_TOKEN_LIMIT_PARAM") or "").strip() or None
 # openai-agents tracing uploads run traces (prompts, workflows) to OpenAI. Opt-in only.
 ENABLE_TRACING = _env_flag("COPILOT_ENABLE_TRACING")
+# Extra folders of workflow JSON files for the local workflow library (os.pathsep-separated)
+WORKFLOW_DIRS = [d.strip() for d in (os.getenv("COPILOT_WORKFLOW_DIRS") or "").split(os.pathsep) if d.strip()]
 
 TENANT_ID = os.getenv("TENANT_ID") or None
 

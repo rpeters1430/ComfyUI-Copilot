@@ -73,7 +73,7 @@ export interface Subgraph {
 }
 
 export interface Workflow {
-  id?: number;
+  id?: number | string;
   name?: string;
   description?: string;
   image?: string;

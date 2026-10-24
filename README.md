@@ -185,6 +185,11 @@ Click the * button，config chat model and workflow generate model seperately.
 
 </div>
 
+#### **Local workflow library**
+Ask Copilot to find a workflow ("find me an SDXL inpainting workflow") and it searches the workflows saved in ComfyUI's Workflows panel. To include other folders of workflow `.json` files, set `COPILOT_WORKFLOW_DIRS` in the plugin's `.env` file (see `.env.example`). Each result says which nodes and model files it needs that aren't installed, and **Accept** loads it onto the canvas. A `.png` or `.webp` with the same name as a workflow file is shown as its thumbnail.
+
+Copilot only uses the nodes and model files installed in your ComfyUI. If a canvas edit would add a node that isn't installed, wire mismatched types, or pick a model file you don't have, the edit is rejected and your canvas stays unchanged.
+
 #### **Note**：
 This project is continuously updated. Please update to the latest code to get new features. You can use git pull to get the latest code, or click "Update" in the ComfyUI Manager plugin.
 

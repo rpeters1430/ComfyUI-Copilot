@@ -3,6 +3,7 @@ Author: ai-business-hql qingli.hql@alibaba-inc.com
 Date: 2025-06-16 16:50:17
 FilePath: /comfyui_copilot/backend/service/mcp-client.py
 '''
+from ..service.discovery_tools import recall_workflow, search_models
 from ..service.workflow_rewrite_tools import get_current_workflow, search_node_local
 from ..utils.globals import (
     DISABLE_WORKFLOW_GEN,
@@ -49,6 +50,8 @@ from pydantic import BaseModel
 MAX_TURNS = 30
 MAX_STREAM_RETRIES = 3
 WORKFLOW_TOOLS = ("recall_workflow", "gen_workflow")
+# Search tools over this ComfyUI; anything else with "search" in its name is web search
+LOCAL_SEARCH_TOOLS = ("search_node_local", "search_models")
 
 # Transport-level failures that are safe to retry when nothing has happened yet.
 _RETRYABLE_ERROR_MARKERS = (
@@ -154,7 +157,8 @@ def build_router_instructions(tool_names: set) -> str:
     """Router prompt that only references tools that are actually available."""
     has_recall = "recall_workflow" in tool_names
     has_gen = "gen_workflow" in tool_names and not DISABLE_WORKFLOW_GEN
-    search_tools = sorted(name for name in tool_names if "search" in name and name not in WORKFLOW_TOOLS)
+    search_tools = sorted(name for name in tool_names
+                          if "search" in name and name not in WORKFLOW_TOOLS + LOCAL_SEARCH_TOOLS)
 
     if has_recall and has_gen:
         workflow_creation_instruction = """
@@ -166,8 +170,18 @@ IF the user wants to find or generate a NEW workflow from scratch.
         workflow_constraint = """
 - [Critical!] When the user's intent is to get workflows or generate images with specific requirements, you MUST ALWAYS call BOTH recall_workflow tool AND gen_workflow tool to provide comprehensive workflow options. Never call just one of these tools - both are required for complete workflow assistance. First call recall_workflow to find existing similar workflows, then call gen_workflow to generate new workflow options.
 """
-    elif has_recall or has_gen:
-        tool = "recall_workflow" if has_recall else "gen_workflow"
+    elif has_recall:
+        workflow_creation_instruction = """
+**CASE 3: SEARCH WORKFLOW**
+IF the user wants to find or start a NEW workflow.
+- Keywords: "create", "generate", "search", "find", "recommend", "生成", "查找", "推荐".
+- Action: Use `recall_workflow` to search the user's workflow library. If nothing suitable is found, offer to hand off to the `Workflow Rewrite Agent`, which builds the workflow on the current canvas from installed nodes.
+"""
+        workflow_constraint = """
+- [Critical!] When the user's intent is to get workflows or generate images with specific requirements, you MUST call `recall_workflow` first.
+"""
+    elif has_gen:
+        tool = "gen_workflow"
         workflow_creation_instruction = f"""
 **CASE 3: SEARCH WORKFLOW**
 IF the user wants to find or generate a NEW workflow.
@@ -189,6 +203,10 @@ IF the user wants a NEW workflow from scratch.
     node_search_constraint = (
         "- To answer questions about nodes (what a node does, which node to use), call `search_node_local`; it searches the nodes installed in this ComfyUI.\n"
     )
+    if "search_models" in tool_names:
+        node_search_constraint += (
+            "- To answer questions about installed models (checkpoints, LoRAs, VAEs, ...), call `search_models`.\n"
+        )
     if search_tools:
         names = ", ".join(f"`{name}`" for name in search_tools)
         node_search_constraint += (
@@ -290,6 +308,9 @@ def parse_tool_output(output: Any) -> Dict[str, Any]:
         elif isinstance(parsed, list):
             result.update(answer=None, data=parsed)
         result["content_dict"] = parsed
+    elif "data" in payload:
+        # Local function tools (e.g. recall_workflow) return {"answer", "data"} directly
+        result.update(answer=payload.get("answer"), data=payload.get("data"), content_dict=payload)
     return result
 
 
@@ -409,12 +430,18 @@ async def comfyui_agent_invoke(messages: List[Dict[str, Any]], images: List[Imag
                 on_handoff=on_handoff,
             )
 
+            local_tools = [get_current_workflow, search_node_local, search_models]
+            # The local workflow library stands in for a remote recall_workflow
+            if "recall_workflow" not in mcp_tool_names:
+                local_tools.append(recall_workflow)
+            tool_names = set(mcp_tool_names) | {tool.name for tool in local_tools}
+
             agent = create_agent(
                 name="ComfyUI-Copilot",
-                instructions=build_router_instructions(mcp_tool_names),
+                instructions=build_router_instructions(tool_names),
                 mcp_servers=server_list,
                 handoffs=[handoff_rewrite],
-                tools=[get_current_workflow, search_node_local],
+                tools=local_tools,
                 config=config,
             )
 
@@ -474,7 +501,9 @@ async def comfyui_agent_invoke(messages: List[Dict[str, Any]], images: List[Imag
                     await asyncio.sleep(wait_time)
 
             log.info(f"Tool results: {list(tool_results)}")
-            ext, finished = merge_workflow_results(tool_results)
+            # Only wait for generated workflows when a generator is connected
+            ext, finished = merge_workflow_results(
+                tool_results, disable_gen=DISABLE_WORKFLOW_GEN or "gen_workflow" not in mcp_tool_names)
 
             final_ext = ext
             if workflow_update_ext:

@@ -56,7 +56,7 @@ def _register_with_comfyui():
 
     # Importing a controller registers its routes on PromptServer. Load each one on its own so
     # a broken dependency disables only its routes, and the sidebar UI is still served.
-    for controller in ("conversation_api", "llm_api", "expert_api", "provider_api"):
+    for controller in ("conversation_api", "llm_api", "expert_api", "provider_api", "discovery_api"):
         try:
             importlib.import_module(f".backend.controller.{controller}", __package__)
         except Exception:
