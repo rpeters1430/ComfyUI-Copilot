@@ -24,7 +24,8 @@ import useCountDown from '../../hooks/useCountDown';
 import LoadingIcon from '../ui/Loading-icon';
 import useLanguage from '../../hooks/useLanguage';
 import StartLink from '../ui/StartLink';
-import TabButton from '../ui/TabButton';
+import { ProviderSettings } from '../providers/ProviderSettings';
+import { loadProviderSettings, ProviderSettingsValue, saveProviderSettings } from '../providers/providerStorage';
 import { WorkflowChatAPI } from '../../apis/workflowChatApi';
 interface ApiKeyModalProps {
     isOpen: boolean;
@@ -36,11 +37,6 @@ interface ApiKeyModalProps {
 
 const BASE_URL = config.apiBaseUrl
 
-const TAB_LIST = [
-    'OpenAI',
-    'LMStudio'
-]
-
 export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onConfigurationUpdated }: ApiKeyModalProps) {
     const [apiKey, setApiKey] = useState(initialApiKey);
     const [email, setEmail] = useState('');
@@ -50,65 +46,43 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
     const { countDown, start } = useCountDown(60);
     const [loading, setLoading] = useState(false);
     
-    // OpenAI configuration
-    const [openaiApiKey, setOpenaiApiKey] = useState('');
-    const [openaiBaseUrl, setOpenaiBaseUrl] = useState('');
-    const [showOpenaiApiKey, setShowOpenaiApiKey] = useState(false);
-    const [verifyingKey, setVerifyingKey] = useState(false);
-    const [verificationResult, setVerificationResult] = useState<{success: boolean, message: string} | null>(null);
+    // Chat LLM provider, plus the workflow and vision model roles
+    const [providerSettings, setProviderSettings] = useState<ProviderSettingsValue>(loadProviderSettings);
+    const updateProvider = (patch: Partial<ProviderSettingsValue>) =>
+        setProviderSettings(prev => ({ ...prev, ...patch }));
     const [rsaPublicKey, setRsaPublicKey] = useState<string | null>(null);
 
     // Workflow LLM configuration
     const [workflowLLMApiKey, setWorkflowLLMApiKey] = useState('');
     const [workflowLLMBaseUrl, setWorkflowLLMBaseUrl] = useState('');
     const [showWorkflowLLMApiKey, setShowWorkflowLLMApiKey] = useState(false);
-    const [workflowLLMModel, setWorkflowLLMModel] = useState('');
+    // One workflow model setting, shared by the provider panel and the separate-endpoint card
+    const workflowLLMModel = providerSettings.workflowModel;
+    const setWorkflowLLMModel = (workflowModel: string) => updateProvider({ workflowModel });
     const [verifyingWorkflowLLM, setVerifyingWorkflowLLM] = useState(false);
     const [workflowVerificationResult, setWorkflowVerificationResult] = useState<{success: boolean, message: string} | null>(null);
     const [workflowLLMModels, setWorkflowLLMModels] = useState<string[]>([]);
     const [workflowLLMModelsLoading, setWorkflowLLMModelsLoading] = useState(false);
 
-    const [activeTab, setActiveTab] = useState<string>(TAB_LIST[0]);
-    const [tabStrMap, setTabStrMap] = useState<Record<string, Record<string, string>> | null>(null);
-
     const { apikeymodel_title } = useLanguage();
 
+    // Show the saved settings each time the modal opens, not edits that were never saved
     useEffect(() => {
-        const map: Record<string, Record<string, string>> = {}
-        TAB_LIST?.forEach((tab) => {
-            map[tab] = {
-                openaiApiKey: '',
-                openaiBaseUrl: '',
-            }
-        })
-        setTabStrMap(map);
-    }, [])
+        if (isOpen) setProviderSettings(loadProviderSettings());
+    }, [isOpen]);
 
     useEffect(() => {
         setApiKey(initialApiKey);
         
-        // Load OpenAI configuration from localStorage
-        const savedOpenaiApiKey = localStorage.getItem('openaiApiKey');
-        const savedOpenaiBaseUrl = localStorage.getItem('openaiBaseUrl');
+        // Load LLM configuration from localStorage
+        setProviderSettings(loadProviderSettings());
         const savedWorkflowLLMApiKey = localStorage.getItem('workflowLLMApiKey');
         const savedWorkflowLLMBaseUrl = localStorage.getItem('workflowLLMBaseUrl');
-        const savedWorkflowLLMModel = localStorage.getItem('workflowLLMModel');
-        
-        if (savedOpenaiApiKey) {
-            setOpenaiApiKey(savedOpenaiApiKey);
-        }
-        
-        if (savedOpenaiBaseUrl) {
-            setOpenaiBaseUrl(savedOpenaiBaseUrl);
-        }
         if (savedWorkflowLLMApiKey) {
             setWorkflowLLMApiKey(savedWorkflowLLMApiKey);
         }
         if (savedWorkflowLLMBaseUrl) {
             setWorkflowLLMBaseUrl(savedWorkflowLLMBaseUrl);
-        }
-        if (savedWorkflowLLMModel) {
-            setWorkflowLLMModel(savedWorkflowLLMModel);
         }
         
         // Fetch RSA public key
@@ -132,51 +106,6 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
             fetchPublicKey();
         }
     }, [initialApiKey]);
-
-    const handleVerifyOpenAiKey = async () => {
-        // Check if it looks like LMStudio URL
-        const isLMStudio = openaiBaseUrl.toLowerCase().includes('localhost') || 
-                          openaiBaseUrl.toLowerCase().includes('127.0.0.1') ||
-                          openaiBaseUrl.includes(':1234') ||
-                          openaiBaseUrl.includes(':1235');
-        
-        if (!openaiApiKey.trim() && !isLMStudio) {
-            setVerificationResult({
-                success: false,
-                message: 'Please enter an API key or use LMStudio URL (localhost:1234)'
-            });
-            return;
-        }
-        
-        if (config.remoteServerEnabled && !rsaPublicKey && !isLMStudio) {
-            setVerificationResult({
-                success: false,
-                message: 'RSA public key not available. Please try again later.'
-            });
-            return;
-        }
-        
-        setVerifyingKey(true);
-        setVerificationResult(null);
-        
-        try {
-            const isValid = await verifyOpenAiApiKey(openaiApiKey, openaiBaseUrl);
-            
-            setVerificationResult({
-                success: isValid,
-                message: isValid ? 
-                    (isLMStudio ? 'LMStudio connection successful!' : 'API key is valid!') : 
-                    (isLMStudio ? 'LMStudio connection failed. Please check if LMStudio server is running.' : 'Invalid API key. Please check and try again.')
-            });
-        } catch (error) {
-            setVerificationResult({
-                success: false,
-                message: error instanceof Error ? error.message : 'Failed to verify connection'
-            });
-        } finally {
-            setVerifyingKey(false);
-        }
-    };
 
     const handleVerifyWorkflowLLMKey = async () => {
         const isLMStudio = workflowLLMBaseUrl.toLowerCase().includes('localhost') || 
@@ -240,12 +169,6 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
         []
     );
 
-    const handleTabChange = (tab: string) => {
-        setActiveTab(tab);
-        setOpenaiApiKey(tabStrMap?.[tab]?.openaiApiKey || '');
-        setOpenaiBaseUrl(tabStrMap?.[tab]?.openaiBaseUrl || '');
-    }
-
     const handleSendEmail = async () => {
         if (!email || email === '' || !isEmailValid)
             return;
@@ -276,42 +199,19 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
         // Save the main API key
         onSave(apiKey);
         
-        // Check if OpenAI configuration has changed
-        const previousOpenaiApiKey = localStorage.getItem('openaiApiKey') || '';
-        const previousOpenaiBaseUrl = localStorage.getItem('openaiBaseUrl') || '';
-        const hasOpenaiConfigChanged = openaiApiKey.trim() !== previousOpenaiApiKey || openaiBaseUrl.trim() !== previousOpenaiBaseUrl;
+        // Provider, base URL, key, and the workflow/vision model roles
+        const hasOpenaiConfigChanged = saveProviderSettings(providerSettings);
         
         // Check if Workflow LLM configuration has changed
         const previousWorkflowLLMApiKey = localStorage.getItem('workflowLLMApiKey') || '';
         const previousWorkflowLLMBaseUrl = localStorage.getItem('workflowLLMBaseUrl') || '';
-        const previousWorkflowLLMModel = localStorage.getItem('workflowLLMModel') || '';
-        const hasWorkflowConfigChanged = workflowLLMApiKey.trim() !== previousWorkflowLLMApiKey || workflowLLMBaseUrl.trim() !== previousWorkflowLLMBaseUrl || workflowLLMModel.trim() !== previousWorkflowLLMModel;
-        
-        // Save or clear OpenAI base URL
-        if (openaiBaseUrl.trim()) {
-            localStorage.setItem('openaiBaseUrl', openaiBaseUrl.trim());
-        } else {
-            localStorage.removeItem('openaiBaseUrl');
-        }
+        const hasWorkflowConfigChanged = workflowLLMApiKey.trim() !== previousWorkflowLLMApiKey || workflowLLMBaseUrl.trim() !== previousWorkflowLLMBaseUrl;
         
         // Save or clear Workflow LLM base URL
         if (workflowLLMBaseUrl.trim()) {
             localStorage.setItem('workflowLLMBaseUrl', workflowLLMBaseUrl.trim());
         } else {
             localStorage.removeItem('workflowLLMBaseUrl');
-        }
-        // Save or clear Workflow LLM model
-        if (workflowLLMModel.trim()) {
-            localStorage.setItem('workflowLLMModel', workflowLLMModel.trim());
-        } else {
-            localStorage.removeItem('workflowLLMModel');
-        }
-        
-        // Save or clear OpenAI API key in localStorage
-        if (openaiApiKey.trim()) {
-            localStorage.setItem('openaiApiKey', openaiApiKey.trim());
-        } else {
-            localStorage.removeItem('openaiApiKey');
         }
         
         // Save or clear Workflow LLM API key
@@ -412,149 +312,18 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
                 {/* LLM Configuration */}
                 <CollapsibleCard 
                     defaultOpen={!config.remoteServerEnabled}
-                    title={<h3 className="text-sm text-gray-900 dark:text-white font-medium">LLM Configuration (OpenAI / LMStudio / Custom)</h3>}
+                    title={<h3 className="text-sm text-gray-900 dark:text-white font-medium">LLM Provider (Ollama / LM Studio / OpenAI-compatible)</h3>}
                     className='mb-4'
                 >
-                    <div>
-                        <div className='mb-4'>
-                            {
-                                TAB_LIST?.map((tab) => <TabButton 
-                                    active={activeTab === tab}
-                                    onClick={() => handleTabChange(tab)}
-                                >
-                                    {tab}
-                                </TabButton>)
-                            }
-                        </div>
-                        {/* API Key */}
-                        {
-                            activeTab !== 'LMStudio' && <div className="mb-4">
-                                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mt-2 mb-2">
-                                    API Key
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type={showOpenaiApiKey ? "text" : "password"}
-                                        value={openaiApiKey}
-                                        onChange={(e) => {
-                                            setTabStrMap(prev => ({
-                                                ...prev,
-                                                [activeTab]: {
-                                                    ...prev?.[activeTab],
-                                                    openaiApiKey: e.target.value
-                                                }
-                                            }))
-                                            setOpenaiApiKey(e.target.value)
-                                        }}
-                                        placeholder="Enter your OpenAI API key "
-                                        className="w-full px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg pr-12 text-xs
-                                        bg-gray-50 dark:bg-gray-700
-                                        text-gray-900 dark:text-white
-                                        placeholder-gray-500 dark:placeholder-gray-400
-                                        focus:border-blue-500 dark:focus:border-blue-400 
-                                        focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20
-                                        focus:outline-none"
-                                    />
-                                    <button
-                                        type="button"
-                                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-500 dark:text-gray-400 
-                                        hover:text-gray-700 dark:hover:text-gray-200 transition-colors bg-transparent border-none"
-                                        onClick={() => setShowOpenaiApiKey(!showOpenaiApiKey)}
-                                    >
-                                        {showOpenaiApiKey ? (
-                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                            </svg>
-                                        ) : (
-                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                                            </svg>
-                                        )}
-                                    </button>
-                                </div>
-                            </div>
-                        }
-                        
-                        {/* Base URL */}
-                        <div className="mb-4">
-                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Server URL
-                            </label>
-                            <input
-                                type="text"
-                                value={openaiBaseUrl}
-                                onChange={(e) => {
-                                    setTabStrMap(prev => ({
-                                        ...prev,
-                                        [activeTab]: {
-                                            ...prev?.[activeTab],
-                                            openaiBaseUrl: e.target.value
-                                        }
-                                    }))
-                                    setOpenaiBaseUrl(e.target.value)
-                                }}
-                                placeholder={`${activeTab==='OpenAI' ? "https://api.openai.com/v1" : "http://localhost:1234/v1"}`}
-                                className="w-full px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-lg text-xs
-                                bg-gray-50 dark:bg-gray-700
-                                text-gray-900 dark:text-white
-                                placeholder-gray-500 dark:placeholder-gray-400
-                                focus:border-blue-500 dark:focus:border-blue-400 
-                                focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20
-                                focus:outline-none"
-                            />
-                        </div>
-                        
-                        <div className="mb-4 text-xs text-gray-500 dark:text-gray-400">
-                            {
-                                activeTab === 'LMStudio' && <div className="mb-1"><strong>� For LMStudio:</strong> http://localhost:1235/v1</div>
-                            }
-                            {
-                                activeTab === 'OpenAI' && <>
-                                    <div className="mb-1"><strong>🌐 For OpenAI:</strong> https://api.openai.com/v1 (requires API key)</div>
-                                    <div><strong>⚙️ For Custom:</strong> Any OpenAI-compatible server URL</div>
-                                </>
-                            }
-                        </div>
-                        
-                        {/* Verify Button */}
-                        <div className="flex items-center mb-2">
-                            <button
-                                onClick={handleVerifyOpenAiKey}
-                                disabled={verifyingKey}
-                                className={`px-4 py-2 rounded-lg font-medium text-xs transition-colors ${
-                                    verifyingKey
-                                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                                        : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white'
-                                }`}
-                            >
-                                {verifyingKey ? (
-                                    <span className="flex items-center text-xs">
-                                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        Verifying...
-                                    </span>
-                                ) : 'Verify'}
-                            </button>
-                        </div>
-                        
-                        {/* Verification Result */}
-                        {verificationResult && (
-                            <div className={`text-xs p-2 rounded-md ${
-                                verificationResult.success 
-                                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' 
-                                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
-                            }`}>
-                                {verificationResult.message}
-                            </div>
-                        )}
-                    </div>
+                    <ProviderSettings
+                        value={providerSettings}
+                        onChange={updateProvider}
+                        separateWorkflowEndpoint={!!workflowLLMBaseUrl.trim()}
+                    />
                 </CollapsibleCard>
                 {/* Workflow LLM Configuration (Optional) */}
                 <CollapsibleCard 
-                    title={<h3 className="text-sm text-gray-900 dark:text-white font-medium">Workflow LLM Configuration (Optional)</h3>}
+                    title={<h3 className="text-sm text-gray-900 dark:text-white font-medium">Separate Workflow LLM Endpoint (Optional)</h3>}
                     className='mb-4'
                 >
                     <div>
@@ -615,7 +384,7 @@ export function ApiKeyModal({ isOpen, onClose, onSave, initialApiKey = '', onCon
                                 focus:outline-none"
                             />
                             <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                                <div className="mb-1"><strong>Optional:</strong> If you don't set, the workflow will use the Claude4 model provided by us. If you need to use other models(note: only some very powerful closed-source models can support this, and they require at least 8192 context) for workflow Debug and modification, please set it.</div>
+                                <div className="mb-1"><strong>Optional:</strong> Use a different server for workflow debugging and canvas edits. If you leave this empty, they use the provider above. These tasks need a strong model with at least 8192 tokens of context.</div>
                             </div>
                             <div className="flex items-center mt-2">
                                 <button

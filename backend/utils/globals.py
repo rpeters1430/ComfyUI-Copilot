@@ -140,6 +140,10 @@ WORKFLOW_LLM_API_KEY = os.getenv("WORKFLOW_LLM_API_KEY") or None
 WORKFLOW_LLM_BASE_URL = os.getenv("WORKFLOW_LLM_BASE_URL") or None
 WORKFLOW_LLM_MODEL = os.getenv("WORKFLOW_LLM_MODEL") or WORKFLOW_MODEL_NAME
 DISABLE_WORKFLOW_GEN = _env_flag("DISABLE_WORKFLOW_GEN")
+VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL") or None
+VISION_LLM_BASE_URL = os.getenv("VISION_LLM_BASE_URL") or None
+VISION_LLM_API_KEY = os.getenv("VISION_LLM_API_KEY") or None
+TOOL_MODE = (os.getenv("COPILOT_TOOL_MODE") or "auto").strip().lower()
 # "max_tokens" or "max_completion_tokens"; unset = picked per endpoint/model
 TOKEN_LIMIT_PARAM = (os.getenv("CC_TOKEN_LIMIT_PARAM") or "").strip() or None
 # openai-agents tracing uploads run traces (prompts, workflows) to OpenAI. Opt-in only.
@@ -169,6 +173,16 @@ def apply_llm_env_defaults(config: Optional[Dict[str, Any]] = None) -> Dict[str,
         cfg["workflow_llm_base_url"] = WORKFLOW_LLM_BASE_URL
     if not cfg.get("workflow_llm_model") and WORKFLOW_LLM_MODEL:
         cfg["workflow_llm_model"] = WORKFLOW_LLM_MODEL
+
+    # Vision model used to describe images for chat models that can't see them
+    if not cfg.get("vision_llm_model") and VISION_LLM_MODEL:
+        cfg["vision_llm_model"] = VISION_LLM_MODEL
+    if not cfg.get("vision_llm_base_url") and VISION_LLM_BASE_URL:
+        cfg["vision_llm_base_url"] = VISION_LLM_BASE_URL
+    if not cfg.get("vision_llm_api_key") and VISION_LLM_API_KEY:
+        cfg["vision_llm_api_key"] = VISION_LLM_API_KEY
+    if not cfg.get("tool_mode"):
+        cfg["tool_mode"] = TOOL_MODE
 
     return cfg
 

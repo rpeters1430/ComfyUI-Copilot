@@ -25,6 +25,7 @@ from ..dao.workflow_table import get_workflow_data, save_workflow_data, get_work
 from ..utils.comfy_gateway import get_object_info, get_object_info_by_class
 from ..utils.request_context import get_rewrite_context, get_session_id
 from ..utils.logger import log
+from ..utils.workflow_validation import validate_api_workflow
 
 def get_workflow_data_from_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """获取工作流数据，优先使用checkpoint_id，如果没有则使用session_id"""
@@ -325,6 +326,60 @@ def save_checkpoint_before_modification(session_id: str, action_description: str
         log.error(f"Failed to save checkpoint before modification: {str(e)}")
         return None
 
+async def node_definitions() -> Optional[Dict[str, Any]]:
+    """ComfyUI's node definitions (/object_info), or None if unavailable (then only structure is checked)."""
+    try:
+        return await asyncio.wait_for(get_object_info(), 10) or None
+    except Exception as e:
+        log.warning(f"Could not load node definitions for validation: {e}")
+        return None
+
+
+async def apply_workflow_update(session_id: str, workflow_data: Any,
+                                description: str = "Workflow structure fixed by rewrite agent") -> Dict[str, Any]:
+    """Validate a rewritten API-format workflow and save it as the session's new version.
+
+    Returns the tool-result dict: {"success", "version_id", "message", "ext"} or {"error"}.
+    Invalid workflows are rejected without touching the saved workflow or the canvas.
+    """
+    try:
+        workflow_dict = json.loads(workflow_data) if isinstance(workflow_data, str) else workflow_data
+    except json.JSONDecodeError as e:
+        return {"error": f"The workflow is not valid JSON ({e}). Return the complete workflow as JSON."}
+
+    problems = validate_api_workflow(workflow_dict, await node_definitions())
+    if problems:
+        log.warning(f"[apply_workflow_update] rejected workflow: {problems}")
+        return {"error": "The workflow was not applied because it is invalid: " + " ".join(problems[:10])}
+
+    # 在修改前保存checkpoint
+    checkpoint_id = save_checkpoint_before_modification(session_id, "workflow update")
+    version_id = save_workflow_data(
+        session_id,
+        workflow_dict,
+        attributes={"action": "workflow_rewrite", "description": description}
+    )
+
+    ext_data = [{"type": "workflow_update", "data": {"workflow_data": workflow_dict}}]
+    # 如果成功保存了checkpoint，添加修改前的checkpoint信息（给用户消息）
+    if checkpoint_id:
+        ext_data.append({
+            "type": "workflow_rewrite_checkpoint",
+            "data": {"checkpoint_id": checkpoint_id, "checkpoint_type": "workflow_rewrite_start"}
+        })
+    if version_id:
+        ext_data.append({
+            "type": "workflow_rewrite_complete",
+            "data": {"version_id": version_id, "checkpoint_type": "workflow_rewrite_complete"}
+        })
+    return {
+        "success": True,
+        "version_id": version_id,
+        "message": f"Workflow updated successfully with version ID: {version_id}",
+        "ext": ext_data,
+    }
+
+
 def tool_error_function(ctx: RunContextWrapper[Any], error: Exception) -> str:
     """The default tool error function, which just returns a generic error message."""
     # return f"An error occurred while running the tool. Please try again. Error: {str(error)}"
@@ -354,52 +409,7 @@ async def update_workflow(workflow_data: str = "") -> str:
             workflow_data = await asyncio.to_thread(rewrite_workflow_simple, rewrite_context)
             
         
-        log.info(f"[update_workflow] workflow_data: {workflow_data}")
-        # 在修改前保存checkpoint
-        checkpoint_id = save_checkpoint_before_modification(session_id, "workflow update")
-        
-        # 解析JSON字符串
-        workflow_dict = json.loads(workflow_data) if isinstance(workflow_data, str) else workflow_data
-        
-        version_id = save_workflow_data(
-            session_id,
-            workflow_dict,
-            attributes={"action": "workflow_rewrite", "description": "Workflow structure fixed by rewrite agent"}
-        )
-        
-        # 构建返回数据，包含checkpoint信息
-        ext_data = [{
-            "type": "workflow_update",
-            "data": {
-                "workflow_data": workflow_dict
-            }
-        }]
-        
-        # 如果成功保存了checkpoint，添加修改前的checkpoint信息（给用户消息）
-        if checkpoint_id:
-            ext_data.append({
-                "type": "workflow_rewrite_checkpoint",
-                "data": {
-                    "checkpoint_id": checkpoint_id,
-                    "checkpoint_type": "workflow_rewrite_start"
-                }
-            })
-        
-        if version_id:
-            ext_data.append({
-                "type": "workflow_rewrite_complete",
-                "data": {
-                    "version_id": version_id,
-                    "checkpoint_type": "workflow_rewrite_complete"
-                }
-            })
-        
-        return json.dumps({
-            "success": True,
-            "version_id": version_id,
-            "message": f"Workflow updated successfully with version ID: {version_id}",
-            "ext": ext_data
-        })
+        return json.dumps(await apply_workflow_update(session_id, workflow_data), ensure_ascii=False)
     except Exception as e:
         log.error(f"Failed to update workflow: {str(e)}")
         return json.dumps({"error": f"Failed to update workflow: {str(e)}. Please try regenerating the workflow and then update again."})

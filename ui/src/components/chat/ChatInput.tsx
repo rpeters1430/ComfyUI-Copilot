@@ -137,7 +137,7 @@ export const ChatInput = forwardRef<ChatInputRef, ChatInputProps>(({
         if (selectedModel && list.findIndex(model => model.name === selectedModel) !== -1) {
             onModelChange(selectedModel)
         } else {
-            onModelChange(list[0].name)
+            onModelChange(list[0]?.name ?? "")
         }
         setLocalStorage(LocalStorageKeys.MODELS_POP_VIEW_LIST, JSON.stringify(list));
         setModels(list);
@@ -150,26 +150,10 @@ export const ChatInput = forwardRef<ChatInputRef, ChatInputProps>(({
             const result = await WorkflowChatAPI.listModels();
             updateModels(result.models);
         } catch (error) {
+            // No fallback list: the old one named models from the hosted server, which local
+            // providers don't have. With no model, the backend replies with what to configure.
             console.error('Failed to load models:', error);
-            // Fallback to default models if API fails
-            const list = [
-                {
-                    "label": "gemini-2.5-flash",
-                    "name": "gemini-2.5-flash",
-                    "image_enable": true
-                },
-                {
-                    "label": "gpt-4.1-mini",
-                    "name": "gpt-4.1-mini-2025-04-14-GlobalStandard",
-                    "image_enable": true,
-                },
-                {
-                    "label": "gpt-4.1",
-                    "name": "gpt-4.1-2025-04-14-GlobalStandard",
-                    "image_enable": true,
-                }
-            ]
-            updateModels(list);
+            updateModels([]);
         }
         setIsLoadingModels(false)
     };
@@ -341,7 +325,7 @@ export const ChatInput = forwardRef<ChatInputRef, ChatInputProps>(({
                     buttonClass={`p-1.5 text-gray-500 bg-white border-none
                         hover:!bg-gray-100 hover:!text-gray-600 
                         transition-all duration-200 outline-none
-                        ${!models?.find(model => model.name === selectedModel)?.image_enable ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        ${!(models?.find(model => model.name === selectedModel)?.image_enable || localStorage.getItem('visionLLMModel')) ? 'opacity-50 cursor-not-allowed' : ''}`}
                     buttonContent={<ImageIcon className="h-4 w-4" />}
                     renderModal={(onClose) => <ImageUploadModal 
                         onUploadImages={onUploadImages}
