@@ -21,6 +21,11 @@ def _chunk(delta, finish_reason=None):
     }
 
 
+def tool_call(name, **arguments):
+    """A queued reply (in "texts") that makes the model call a tool instead of answering."""
+    return {"tool_call": {"name": name, "arguments": arguments}}
+
+
 def _next_text(reply):
     # "texts" is a queue of replies for multi-step flows; "text" is the reply when the queue is empty
     texts = reply.get("texts")
@@ -38,6 +43,8 @@ async def _chat_completions(request):
                                  status=reply["status"])
 
     text = _next_text(reply)
+    if isinstance(text, dict) and "tool_call" in text:
+        return await _stream_tool_call(request, text["tool_call"])
     if not body.get("stream"):
         return web.json_response({
             "id": "chatcmpl-test", "object": "chat.completion", "created": 0, "model": body.get("model"),
@@ -52,6 +59,19 @@ async def _chat_completions(request):
     for delta in deltas:
         await response.write(f"data: {json.dumps(_chunk(delta))}\n\n".encode())
     await response.write(f"data: {json.dumps(_chunk({}, finish_reason='stop'))}\n\n".encode())
+    await response.write(b"data: [DONE]\n\n")
+    return response
+
+
+async def _stream_tool_call(request, call):
+    response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+    await response.prepare(request)
+    delta = {"role": "assistant", "tool_calls": [{
+        "index": 0, "id": f"call_{call['name']}", "type": "function",
+        "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])},
+    }]}
+    await response.write(f"data: {json.dumps(_chunk(delta))}\n\n".encode())
+    await response.write(f"data: {json.dumps(_chunk({}, finish_reason='tool_calls'))}\n\n".encode())
     await response.write(b"data: [DONE]\n\n")
     return response
 

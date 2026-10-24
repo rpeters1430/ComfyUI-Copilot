@@ -43,8 +43,9 @@ def test_chat_streams_without_any_mcp_server(routes, temp_session_db):
     assert llm_request["body"]["model"] == "fake-model"
     assert llm_request["auth"] == "Bearer sk-user"
     tool_names = {tool["function"]["name"] for tool in llm_request["body"].get("tools", [])}
-    assert {"get_current_workflow", "search_node_local"} <= tool_names
-    assert not tool_names & {"recall_workflow", "gen_workflow"}
+    # Without MCP servers the local discovery tools stand in; nothing can generate workflows
+    assert {"get_current_workflow", "search_node_local", "search_models", "recall_workflow"} <= tool_names
+    assert "gen_workflow" not in tool_names
 
 
 def test_wrong_api_key_gives_actionable_message(routes, temp_session_db):

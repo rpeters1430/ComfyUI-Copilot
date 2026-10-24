@@ -5,6 +5,7 @@ import { generateUUID } from "../../../utils/uuid";
 import { useEffect, useState } from "react";
 import { Tooltip } from 'antd';
 import { ACCEPT_EVENT } from "../../ui/StartPopView";
+import { getLibraryWorkflow, LOCAL_WORKFLOW_SOURCE } from "../../../apis/discoveryApi";
 interface WorkflowOptionProps {
     content: string;
     name?: string;
@@ -70,11 +71,10 @@ export function WorkflowOption({ content, name = 'Assistant', avatar, latestInpu
         }));
         
         try {
-            // 获取优化后的工作流
-            const optimizedResult = await WorkflowChatAPI.getOptimizedWorkflow(
-                workflow.id,
-                latestInput
-            );
+            // 获取优化后的工作流. Library workflows load as saved, from the local backend
+            const optimizedResult = workflow.source === LOCAL_WORKFLOW_SOURCE
+                ? { workflow: (await getLibraryWorkflow(workflowId)).workflow, optimized_params: [] }
+                : await WorkflowChatAPI.getOptimizedWorkflow(workflow.id as number, latestInput);
 
             // 加载优化后的工作流
             if (optimizedResult.workflow) {

@@ -3,7 +3,6 @@
 import asyncio
 import json
 import time
-import copy
 from typing import Dict, Any, Optional
 
 try:
@@ -22,7 +21,7 @@ except Exception:
 from .workflow_rewrite_agent_simple import rewrite_workflow_simple
 
 from ..dao.workflow_table import get_workflow_data, save_workflow_data, get_workflow_data_ui, get_workflow_data_by_id
-from ..utils.comfy_gateway import get_object_info, get_object_info_by_class
+from ..discovery.nodes import find_class, get_node_definitions, search_nodes, summarize_node
 from ..utils.request_context import get_rewrite_context, get_session_id
 from ..utils.logger import log
 from ..utils.workflow_validation import validate_api_workflow
@@ -78,229 +77,80 @@ def get_current_workflow() -> str:
     get_rewrite_context().current_workflow = workflow_data_str
     return workflow_data_str
 
+def _not_installed(node_class: str, definitions: Dict[str, Any]) -> Dict[str, Any]:
+    suggestions = [hit["class_name"] for hit in search_nodes(definitions, node_class, limit=5)]
+    return {"error": f"Node class '{node_class}' is not installed in this ComfyUI",
+            "suggestions": suggestions}
+
+
 @function_tool
 async def get_node_info(node_class: str) -> str:
     """获取节点的详细信息，包括输入输出参数"""
-    try:
-        object_info = await get_object_info()
-        if node_class in object_info:
-            node_info_str = json.dumps(object_info[node_class], ensure_ascii=False)
-            get_rewrite_context().node_infos[node_class] = node_info_str
-            return node_info_str
-        else:
-            # 搜索类似的节点类
-            similar_nodes = [k for k in object_info.keys() if node_class.lower() in k.lower()]
-            if similar_nodes:
-                return json.dumps({
-                    "error": f"Node class '{node_class}' not found",
-                    "suggestions": similar_nodes[:5]
-                })
-            return json.dumps({"error": f"Node class '{node_class}' not found"})
-    except Exception as e:
-        return json.dumps({"error": f"Failed to get node info: {str(e)}"})
+    definitions = await get_node_definitions()
+    if not definitions:
+        return json.dumps({"error": "Could not load node definitions from ComfyUI"})
+    class_name = find_class(definitions, node_class)
+    if class_name is None:
+        return json.dumps(_not_installed(node_class, definitions), ensure_ascii=False)
+    node_info_str = json.dumps({class_name: definitions[class_name]}, ensure_ascii=False)
+    get_rewrite_context().node_infos[class_name] = node_info_str
+    return node_info_str
+
 
 @function_tool
 async def get_node_infos(node_class_list: list[str]) -> str:
-    """获取多个节点的详细信息，包括输入输出参数。只做最小化有必要的查询，不要查询很常见的LLM已知用法的节点。尽量不要超过5个"""
-    try:
-        object_info = await get_object_info()
-        node_infos = {}
-        for node_class in node_class_list:
-            if node_class in object_info:
-                # Deep copy to avoid modifying the original cached object info
-                node_data = copy.deepcopy(object_info[node_class])
-                
-                # Truncate long lists in input parameters to save context
-                input_data = node_data.get("input", {})
-                for req_opt in ["required", "optional"]:
-                    params = input_data.get(req_opt, {})
-                    for param_name, param_config in params.items():
-                        # param_config is typically [type_or_list, config_dict]
-                        if isinstance(param_config, list) and len(param_config) > 0:
-                            # Check if the first element is a list (which means it's a selection list)
-                            if isinstance(param_config[0], list):
-                                if len(param_config[0]) > 3:
-                                    param_config[0] = param_config[0][:3]
-                
-                node_infos[node_class] = node_data
-        return json.dumps(node_infos)
-    except Exception as e:
-        return json.dumps({"error": f"Failed to get node infos of {','.join(node_class_list)}: {str(e)}"})
+    """Get the specs of up to 5 installed nodes: every input (type, required, options, default,
+    min/max) and every output (index, name, type). Use exact class names from search_node_local."""
+    definitions = await get_node_definitions()
+    if not definitions:
+        return json.dumps({"error": "Could not load node definitions from ComfyUI"})
+    node_infos = {}
+    for node_class in node_class_list[:10]:
+        class_name = find_class(definitions, node_class)
+        if class_name is None:
+            node_infos[node_class] = _not_installed(node_class, definitions)
+            continue
+        node_infos[class_name] = summarize_node(class_name, definitions[class_name])
+        get_rewrite_context().node_infos[class_name] = json.dumps(node_infos[class_name], ensure_ascii=False)
+    return json.dumps(node_infos, ensure_ascii=False)
+
 
 @function_tool
 async def search_node_local(node_class: str = "", keywords: list[str] = None, limit: int = 10) -> str:
     """
-    节点的搜索工具（node_class + keywords 联合检索）：
-    1. 优先使用 node_class 按节点类名精确查询。
-    2. 如果没有命中，则在全部节点中使用 node_class 和 keywords 做联合模糊搜索：
-       - 关键词会在节点类名、名称、显示名、分类、描述以及输入参数名中匹配。
-       - 关键词是英文。
-       - 关键词应该尽量具体（例如 "brightness"、"contrast"、"saturation"、"sharpness"），
-         避免使用过于宽泛的词（例如 "image" 等），以减少噪声结果。
+    Search the nodes installed in this ComfyUI. Only nodes returned here (or by get_node_infos)
+    exist; never invent node class names or input names.
+    - node_class: a class name you already know ("KSampler", "LoraLoader"). An exact or
+      case-insensitive match returns that node's full spec.
+    - keywords: 1-3 specific English words for what the node does or its inputs
+      ("upscale", "controlnet", "brightness"). Avoid broad words like "image".
+    Returns ranked candidates with class_name, display_name, category and pack.
     """
-    try:
-        node_class_str = (node_class or "").strip()
-        # 过滤空字符串和过于宽泛的关键词
-        raw_keywords = keywords or []
-        banned_keywords = {"image", "图像", "图片"}
-        keyword_list: list[str] = []
-        for kw in raw_keywords:
-            if not kw:
-                continue
-            kw_str = str(kw).strip()
-            if not kw_str:
-                continue
-            if kw_str.lower() in banned_keywords:
-                continue
-            keyword_list.append(kw_str)
+    definitions = await get_node_definitions()
+    if not definitions:
+        return json.dumps({"error": "Could not load node definitions from ComfyUI"})
 
-        # 1) 如果提供了 node_class，则先尝试精确按类名查询
-        if node_class_str:
-            try:
-                exact_info = await get_object_info_by_class(node_class_str)
-            except TypeError:
-                # 兼容旧版本导入方式异常的情况
-                exact_info = {}
+    node_class_str = (node_class or "").strip()
+    keyword_list = [str(kw).strip() for kw in (keywords or []) if str(kw or "").strip()]
+    if not node_class_str and not keyword_list:
+        return json.dumps({"error": "both node_class and keywords are empty"})
 
-            if exact_info:
-                # exact_info 形如：{"LayerColor: BrightnessContrastV2": { ... }}
-                # 写入 rewrite_context 以便后续复用
-                rewrite_ctx = get_rewrite_context()
-                for cls_name, meta in exact_info.items():
-                    try:
-                        rewrite_ctx.node_infos[cls_name] = json.dumps(meta, ensure_ascii=False)
-                    except Exception:
-                        # 不因为缓存失败而影响主流程
-                        pass
+    if node_class_str:
+        class_name = find_class(definitions, node_class_str)
+        if class_name is not None:
+            summary = summarize_node(class_name, definitions[class_name])
+            get_rewrite_context().node_infos[class_name] = json.dumps(summary, ensure_ascii=False)
+            return json.dumps({"node_class": node_class_str, "keywords": keyword_list,
+                               "match_type": "exact_class", "results": {class_name: summary}},
+                              ensure_ascii=False)
 
-                return json.dumps(
-                    {
-                        "node_class": node_class_str,
-                        "keywords": keyword_list,
-                        "match_type": "exact_class",
-                        "results": exact_info,
-                    },
-                    ensure_ascii=False,
-                )
-
-        # 2) 精确类名未命中：在全部节点中按 node_class + keywords 联合搜索
-        if not node_class_str and not keyword_list:
-            return json.dumps({"error": "both node_class and keywords are empty"})
-
-        object_info = await get_object_info()
-        if not object_info:
-            return json.dumps({"error": "Failed to fetch object info from ComfyUI"})
-
-        # 组合所有搜索 token：node_class + keywords
-        tokens: list[str] = []
-        if node_class_str:
-            tokens.append(node_class_str.lower())
-        tokens.extend([kw.lower() for kw in keyword_list])
-
-        candidates = []
-
-        for cls_name, meta in object_info.items():
-            cls_str = str(cls_name)
-            cls_lower = cls_str.lower()
-
-            name = str(meta.get("name", "") or "")
-            display_name = str(meta.get("display_name", "") or "")
-            category = str(meta.get("category", "") or "")
-            description = str(meta.get("description", "") or "")
-
-            text_blocks = [
-                cls_lower,
-                name.lower(),
-                display_name.lower(),
-                category.lower(),
-                description.lower(),
-            ]
-            joined_text = " ".join(text_blocks)
-
-            score = 0
-            hit_params: list[str] = []
-
-            # 输入参数信息，用于参数名匹配
-            input_meta = meta.get("input") or {}
-            required_inputs = {}
-            optional_inputs = {}
-            if isinstance(input_meta, dict):
-                required_inputs = input_meta.get("required") or {}
-                optional_inputs = input_meta.get("optional") or {}
-
-            # 针对每个 token 进行匹配和评分计算
-            for token in tokens:
-                if not token:
-                    continue
-
-                # 方案1：按类名 / 名称 / 分类 / 描述做关键字匹配
-                if token in joined_text:
-                    score += joined_text.count(token)
-                    if token in cls_lower:
-                        score += 2
-
-                # 方案2：按输入参数名搜索（brightness、contrast、saturation 等）
-                for section in (required_inputs, optional_inputs):
-                    if isinstance(section, dict):
-                        for param_name in section.keys():
-                            p_str = str(param_name)
-                            if token in p_str.lower():
-                                if p_str not in hit_params:
-                                    hit_params.append(p_str)
-
-                # 方案3：输出名称作为弱信号
-                output_names = meta.get("output_name") or []
-                if isinstance(output_names, list):
-                    for out_name in output_names:
-                        if token in str(out_name).lower():
-                            score += 1
-
-            if hit_params:
-                # 参数命中整体提高权重
-                score += len(hit_params) * 3
-
-            if score <= 0:
-                continue
-
-            candidates.append(
-                {
-                    "class_name": cls_str,
-                    "score": score,
-                    "hit_params": hit_params,
-                    "name": name,
-                    "display_name": display_name,
-                    "category": category,
-                }
-            )
-
-        if not candidates:
-            return json.dumps(
-                {
-                    "node_class": node_class_str,
-                    "keywords": keyword_list,
-                    "match_type": "search",
-                    "results": [],
-                    "message": "No nodes matched the query",
-                },
-                ensure_ascii=False,
-            )
-
-        # 按得分排序，并限制返回数量
-        candidates.sort(key=lambda x: x["score"], reverse=True)
-        limit = max(1, min(int(limit), 50))  # 给一个合理的上限
-        results = candidates[:limit]
-
-        return json.dumps(
-            {
-                "node_class": node_class_str,
-                "keywords": keyword_list,
-                "match_type": "search",
-                "results": results,
-            },
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        return json.dumps({"error": f"Failed to search node info: {str(e)}"})
+    limit = max(1, min(int(limit or 10), 50))
+    results = search_nodes(definitions, [node_class_str, *keyword_list], limit)
+    response = {"node_class": node_class_str, "keywords": keyword_list, "match_type": "search",
+                "results": results}
+    if not results:
+        response["message"] = "No installed nodes matched the query"
+    return json.dumps(response, ensure_ascii=False)
 
 def save_checkpoint_before_modification(session_id: str, action_description: str) -> Optional[int]:
     """在修改工作流前保存checkpoint，返回checkpoint_id"""
@@ -328,11 +178,7 @@ def save_checkpoint_before_modification(session_id: str, action_description: str
 
 async def node_definitions() -> Optional[Dict[str, Any]]:
     """ComfyUI's node definitions (/object_info), or None if unavailable (then only structure is checked)."""
-    try:
-        return await asyncio.wait_for(get_object_info(), 10) or None
-    except Exception as e:
-        log.warning(f"Could not load node definitions for validation: {e}")
-        return None
+    return await get_node_definitions()
 
 
 async def apply_workflow_update(session_id: str, workflow_data: Any,

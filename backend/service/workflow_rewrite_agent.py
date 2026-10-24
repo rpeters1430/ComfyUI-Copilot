@@ -23,6 +23,7 @@ from ..utils.globals import WORKFLOW_MODEL_NAME, get_language
 from ..utils.request_context import get_config, get_session_id
 
 from ..service.workflow_rewrite_tools import *
+from ..service.discovery_tools import search_models
 
 
 @function_tool
@@ -93,6 +94,9 @@ def create_workflow_rewrite_agent():
               * 避免在 keywords 中使用过于宽泛的词（例如 "image"、"图像" 等），否则会导致搜索结果过多且不精确。
               在选择工作流中要使用的节点时，先调用一次 search_node_info() 获取候选，再结合 get_node_infos() 查看详细规格，不要盲目猜测节点名称连续调用 get_node_infos(["错误名称"])。
             - get_node_infos(): 当你已经有少量（建议不超过5个）的候选节点类名时，使用该工具一次性获取这些节点的详细信息；如果只需要单个节点的信息，也可以传入单元素列表（例如 ["LayerColor: BrightnessContrastV2"]）来代替传统的 get_node_info 调用。
+              Returns each input's type, whether it is required, combo options, default and min/max, and each output's index and type. Link an input only to an output of the same type.
+            - search_models(query, folder): Find installed model files. Loader inputs (ckpt_name, lora_name, vae_name, unet_name, clip_name, ...) MUST use a `name` returned by this tool exactly; never invent model file names.
+        - [Critical] Use only node classes, input names and model files returned by these tools. update_workflow rejects workflows with nodes that aren't installed, unknown or missing inputs, mismatched link types, or values that aren't available options, and the canvas stays unchanged; read the error, fix those exact problems and call update_workflow again.
             - remove_node(): Use for incompatible or problematic nodes
             - update_workflow(): Use to save your changes (ALWAYS call this after you have made changes), you MUST pass argument `workflow_data` containing the FULL workflow JSON (as a JSON object or a JSON string). Never call `update_workflow` without `workflow_data`.
 
@@ -110,7 +114,8 @@ def create_workflow_rewrite_agent():
 
         始终以用户的实际需求为导向，提供专业、准确、高效的工作流改写服务。
         """,
-        tools=[get_rewrite_expert_by_name, get_current_workflow, search_node_local, get_node_infos, update_workflow, remove_node],
+        tools=[get_rewrite_expert_by_name, get_current_workflow, search_node_local, get_node_infos, search_models,
+               update_workflow, remove_node],
         config={
             "max_tokens": 8192,
             ** config

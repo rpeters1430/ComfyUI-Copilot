@@ -74,7 +74,9 @@ def models_dir():
 @pytest.fixture
 def routes():
     # Importing the controllers registers their handlers on the stub PromptServer
-    from backend.controller import conversation_api, expert_api, llm_api, provider_api  # noqa: F401
+    from backend.controller import (  # noqa: F401
+        conversation_api, discovery_api, expert_api, llm_api, provider_api,
+    )
 
     return sys.modules["server"].PromptServer.instance.routes
 
