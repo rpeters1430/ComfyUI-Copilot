@@ -37,6 +37,8 @@ except Exception:
 from ..agent_factory import create_agent, LLMConfigurationError
 from ..service.workflow_rewrite_agent import create_workflow_rewrite_agent
 from ..service.message_memory import message_memory_optimize
+from ..service.json_fallback import json_fallback_invoke
+from ..service.negotiation import chat_model_info, prepare_images, resolve_tool_mode
 from ..utils.request_context import get_rewrite_context, get_session_id, get_config
 from ..utils.llm_errors import describe_llm_error
 from ..utils.logger import log
@@ -349,6 +351,21 @@ async def comfyui_agent_invoke(messages: List[Dict[str, Any]], images: List[Imag
         log.info(f"[MCP] Original messages count: {len(messages)}")
         messages = await asyncio.to_thread(message_memory_optimize, session_id, messages)
         log.info(f"[MCP] Optimized messages count: {len(messages)}")
+
+        # Adapt to the selected model: describe images it can't see, and skip the
+        # tool-calling agent router for models without tool support
+        model_info = await chat_model_info(config)
+        messages = await prepare_images(messages, config, model_info)
+        tool_mode = resolve_tool_mode(config, model_info)
+        if tool_mode == "json":
+            log.info(f"[MCP] Using JSON mode for {config.get('model_select')}")
+            notice = None
+            if (config.get("tool_mode") or "auto") == "auto":
+                notice = (f"{model_info.id} doesn't support tool calling, so Copilot is using simple mode. "
+                          "Choose a tool-capable model for the full assistant.")
+            async for item in json_fallback_invoke(messages, config, model_info, notice):
+                yield item
+            return
 
         async with contextlib.AsyncExitStack() as stack:
             server_list, mcp_tool_names = await connect_mcp_servers(stack, build_mcp_servers(session_id))

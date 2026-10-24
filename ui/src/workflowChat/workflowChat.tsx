@@ -181,7 +181,7 @@ export default function WorkflowChat({ onClose, visible = true, triggerUsage = f
     const [width, setWidth] = useState(window.innerWidth / 3);
     const [isResizing, setIsResizing] = useState(false);
     const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
-    const [selectedModel, setSelectedModel] = useState<string>("gemini-2.5-flash");
+    const [selectedModel, setSelectedModel] = useState<string>("");
     const [height, setHeight] = useState<number>(window.innerHeight);
     const [topPosition, setTopPosition] = useState<number>(0);
     // 添加公告状态

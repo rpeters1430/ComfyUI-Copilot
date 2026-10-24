@@ -74,7 +74,7 @@ def models_dir():
 @pytest.fixture
 def routes():
     # Importing the controllers registers their handlers on the stub PromptServer
-    from backend.controller import conversation_api, expert_api, llm_api  # noqa: F401
+    from backend.controller import conversation_api, expert_api, llm_api, provider_api  # noqa: F401
 
     return sys.modules["server"].PromptServer.instance.routes
 
@@ -88,3 +88,13 @@ def temp_session_db(tmp_path, monkeypatch):
     monkeypatch.setattr(session_message_table, "session_message_manager", manager)
     return manager
 
+
+
+@pytest.fixture
+def temp_workflow_db(tmp_path, monkeypatch):
+    """Point the workflow-checkpoint DAO at a throwaway SQLite file."""
+    from backend.dao import workflow_table
+
+    manager = workflow_table.DatabaseManager(db_path=str(tmp_path / "workflow_debug.db"))
+    monkeypatch.setattr(workflow_table, "db_manager", manager)
+    return workflow_table

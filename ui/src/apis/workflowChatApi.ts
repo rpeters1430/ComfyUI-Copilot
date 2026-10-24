@@ -41,6 +41,9 @@ const getOpenAiConfig = () => {
     const workflowLLMApiKey = localStorage.getItem('workflowLLMApiKey');
     const workflowLLMBaseUrl = localStorage.getItem('workflowLLMBaseUrl');
     const workflowLLMModel = localStorage.getItem('workflowLLMModel');
+    const llmProvider = localStorage.getItem('llmProvider');
+    const visionLLMModel = localStorage.getItem('visionLLMModel');
+    const toolMode = localStorage.getItem('copilotToolMode');
     
     return { 
         openaiApiKey: openaiApiKey || '', 
@@ -49,17 +52,26 @@ const getOpenAiConfig = () => {
         workflowLLMApiKey: workflowLLMApiKey || '',
         workflowLLMBaseUrl: workflowLLMBaseUrl || '',
         workflowLLMModel: workflowLLMModel || '',
+        llmProvider: llmProvider || '',
+        visionLLMModel: visionLLMModel || '',
+        toolMode: toolMode || '',
     };
 };
 
 // The user's LLM settings, sent only to the local plugin backend (never to a remote server)
 const addLocalLlmHeaders = (headers: Record<string, string>) => {
-    const { openaiApiKey, openaiBaseUrl, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel } = getOpenAiConfig();
+    const {
+        openaiApiKey, openaiBaseUrl, workflowLLMApiKey, workflowLLMBaseUrl, workflowLLMModel,
+        llmProvider, visionLLMModel, toolMode,
+    } = getOpenAiConfig();
     if (openaiApiKey.trim()) headers['Openai-Api-Key'] = openaiApiKey;
     if (openaiBaseUrl.trim()) headers['Openai-Base-Url'] = openaiBaseUrl;
     if (workflowLLMApiKey) headers['Workflow-LLM-Api-Key'] = workflowLLMApiKey;
     if (workflowLLMBaseUrl) headers['Workflow-LLM-Base-Url'] = workflowLLMBaseUrl;
     if (workflowLLMModel) headers['Workflow-LLM-Model'] = workflowLLMModel;
+    if (llmProvider) headers['Llm-Provider'] = llmProvider;
+    if (visionLLMModel) headers['Vision-LLM-Model'] = visionLLMModel;
+    if (toolMode) headers['Copilot-Tool-Mode'] = toolMode;
 };
 
 const getSelectedModel = () => getLocalStorage(LocalStorageKeys.MODELS_POP_VIEW_SELECTED) || undefined;
@@ -614,6 +626,10 @@ export namespace WorkflowChatAPI {
     const openaiBaseUrl = localStorage.getItem('openaiBaseUrl');
     if (openaiBaseUrl) {
       headers['Openai-Base-Url'] = openaiBaseUrl;
+    }
+    const llmProvider = localStorage.getItem('llmProvider');
+    if (llmProvider) {
+      headers['Llm-Provider'] = llmProvider;
     }
 
     const response = await fetch('/api/model_config', {

@@ -1,4 +1,8 @@
-"""A minimal OpenAI-compatible chat-completions server for integration tests."""
+"""A minimal OpenAI-compatible server for integration tests.
+
+It can also impersonate LM Studio's and Ollama's native model APIs so
+capability detection can be tested without either installed.
+"""
 
 import json
 from contextlib import asynccontextmanager
@@ -17,6 +21,14 @@ def _chunk(delta, finish_reason=None):
     }
 
 
+def _next_text(reply):
+    # "texts" is a queue of replies for multi-step flows; "text" is the reply when the queue is empty
+    texts = reply.get("texts")
+    if texts:
+        return texts.pop(0)
+    return reply.get("text", "Hello there")
+
+
 async def _chat_completions(request):
     body = await request.json()
     request.app[LLM_REQUESTS].append({"body": body, "auth": request.headers.get("Authorization")})
@@ -25,16 +37,17 @@ async def _chat_completions(request):
         return web.json_response({"error": {"message": reply.get("error", "error"), "type": "invalid_request_error"}},
                                  status=reply["status"])
 
+    text = _next_text(reply)
     if not body.get("stream"):
         return web.json_response({
             "id": "chatcmpl-test", "object": "chat.completion", "created": 0, "model": body.get("model"),
             "choices": [{"index": 0, "finish_reason": "stop",
-                         "message": {"role": "assistant", "content": reply.get("text", "Hello there")}}],
+                         "message": {"role": "assistant", "content": text}}],
         })
 
     response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
     await response.prepare(request)
-    words = reply.get("text", "Hello there").split(" ")
+    words = text.split(" ")
     deltas = [{"role": "assistant", "content": words[0]}] + [{"content": f" {word}"} for word in words[1:]]
     for delta in deltas:
         await response.write(f"data: {json.dumps(_chunk(delta))}\n\n".encode())
@@ -43,20 +56,45 @@ async def _chat_completions(request):
     return response
 
 
+async def _openai_models(request):
+    models = request.app[LLM_REPLY].get("models", [])
+    return web.json_response({"object": "list", "data": [{"id": m["key"], "object": "model"} for m in models]})
+
+
+async def _lmstudio_v1_models(request):
+    models = request.app[LLM_REPLY].get("models")
+    if models is None:
+        raise web.HTTPNotFound()
+    return web.json_response({"models": models})
+
+
+def lmstudio_model(key, tools=False, vision=False, context=32768, model_type="llm"):
+    return {"type": model_type, "key": key, "display_name": key, "max_context_length": context,
+            "loaded_instances": [], "capabilities": {"vision": vision, "trained_for_tool_use": tools}}
+
+
+@asynccontextmanager
+async def fake_llm_server(**reply):
+    """Yield (base_url ending in /v1, recorded chat requests)."""
+    app = web.Application()
+    app[LLM_REQUESTS] = []
+    app[LLM_REPLY] = reply
+    app.router.add_post("/v1/chat/completions", _chat_completions)
+    app.router.add_get("/v1/models", _openai_models)
+    app.router.add_get("/api/v1/models", _lmstudio_v1_models)
+    async with TestServer(app) as server:
+        yield str(server.make_url("/v1")), app[LLM_REQUESTS]
+
+
 @asynccontextmanager
 async def copilot_with_fake_llm(handlers, **reply):
     """Yield (client for the Copilot routes, base URL of the fake LLM, recorded LLM requests)."""
-    llm_app = web.Application()
-    llm_app[LLM_REQUESTS] = []
-    llm_app[LLM_REPLY] = reply
-    llm_app.router.add_post("/v1/chat/completions", _chat_completions)
-
     copilot_app = web.Application()
     for (method, path), handler in handlers.items():
         copilot_app.router.add_route(method, path, handler)
 
-    async with TestServer(llm_app) as llm_server, TestClient(TestServer(copilot_app)) as client:
-        yield client, str(llm_server.make_url("/v1")), llm_app[LLM_REQUESTS]
+    async with fake_llm_server(**reply) as (base_url, llm_requests), TestClient(TestServer(copilot_app)) as client:
+        yield client, base_url, llm_requests
 
 
 async def read_chat_lines(response):

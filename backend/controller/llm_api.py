@@ -7,6 +7,8 @@ from aiohttp import web
 from ..utils.globals import LLM_DEFAULT_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, TENANT_ID, is_lmstudio_url
 import server
 import aiohttp
+from ..providers import ProviderError, get_provider
+from ..providers.registry import list_models_cached
 from ..utils.logger import log
 
 MODELS_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15)
@@ -57,15 +59,23 @@ async def list_models(request):
         openai_api_key = request.headers.get('Openai-Api-Key') or OPENAI_API_KEY or ""
         openai_base_url = request.headers.get('Openai-Base-Url') or OPENAI_BASE_URL or LLM_DEFAULT_BASE_URL
 
-        status, models = await fetch_models(openai_base_url, openai_api_key)
-        llm_config = []
-        if status == 200:
-            for model in models.get('data', []):
-                llm_config.append({
-                    "label": model['id'],
-                    "name": model['id'],
-                    "image_enable": True
-                })
+        provider = get_provider(openai_base_url, openai_api_key, request.headers.get('Llm-Provider'))
+        try:
+            models = await list_models_cached(provider)
+        except ProviderError as e:
+            log.error(f"list_models failed: {e}")
+            models = []
+        llm_config = [
+            {
+                "label": model.display_name or model.id,
+                "name": model.id,
+                # Unknown capability stays enabled so providers without metadata aren't restricted
+                "image_enable": model.capabilities.vision is not False,
+                "tools": model.capabilities.tools,
+                "context_length": model.capabilities.context_length,
+            }
+            for model in models if model.is_chat_model
+        ]
         
         return web.json_response({
                 "models": llm_config

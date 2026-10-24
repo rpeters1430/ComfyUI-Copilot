@@ -16,6 +16,14 @@ def get_llm_config_from_headers(request):
         "workflow_llm_api_key": request.headers.get('Workflow-LLM-Api-Key'),
         "workflow_llm_base_url": request.headers.get('Workflow-LLM-Base-Url'),
         "workflow_llm_model": request.headers.get('Workflow-LLM-Model'),
+        # Optional model that describes images for chat models without vision
+        "vision_llm_model": request.headers.get('Vision-LLM-Model'),
+        "vision_llm_base_url": request.headers.get('Vision-LLM-Base-Url'),
+        "vision_llm_api_key": request.headers.get('Vision-LLM-Api-Key'),
+        # Provider kind (openai / ollama / lmstudio); detected from the URL when absent
+        "llm_provider": request.headers.get('Llm-Provider'),
+        # auto (decide from model capabilities), agent (tool calling) or json (no tools)
+        "tool_mode": request.headers.get('Copilot-Tool-Mode'),
     }
 
 

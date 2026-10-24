@@ -10,15 +10,15 @@ Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查�
 import json
 from typing import Dict, Any, Optional
 import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from ..utils.key_utils import workflow_config_adapt
 from openai import OpenAI
 
-from ..agent_factory import create_agent
 from ..utils.globals import WORKFLOW_MODEL_NAME
 from ..utils.llm_settings import resolve_llm_settings, token_limit_kwargs
 from ..utils.request_context import get_config, get_rewrite_context, RewriteContext
 from ..utils.logger import log
+from ..utils.structured_output import complete_json
 
 
 class RewriteResponse(BaseModel):
@@ -26,6 +26,12 @@ class RewriteResponse(BaseModel):
     重写后的工作流数据，必须是严格的JSON字符串
     """
     workflow_data: str
+
+    @field_validator("workflow_data", mode="before")
+    @classmethod
+    def _accept_object(cls, value):
+        # In JSON mode, models often return the workflow as an object rather than an escaped string
+        return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
 
 def rewrite_workflow_simple(rewrite_context: RewriteContext) -> str:
     """
@@ -91,18 +97,18 @@ ComfyUI API格式工作流是一个JSON对象，其中：
         client = OpenAI(base_url=base_url, api_key=api_key)
 
         # 调用LLM
-        completion = client.chat.completions.parse(
-            model=model_name,
-            messages=[
+        # Falls back from json_schema to JSON mode to plain text for models without structured outputs
+        result = complete_json(
+            client,
+            model_name,
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_info}
             ],
+            RewriteResponse,
             **token_limit_kwargs(model_name, base_url, 8192),
             temperature=0.1,  # 降低随机性，确保输出一致性
-            response_format=RewriteResponse  # 要求返回JSON格式
         )
-
-        result = completion.choices[0].message.parsed
         log.info(f"workflow simple rewrite LLM response: {result}")
 
         # 解析返回的JSON

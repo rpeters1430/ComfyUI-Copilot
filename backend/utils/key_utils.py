@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-SENSITIVE_CONFIG_KEYS = ("openai_api_key", "workflow_llm_api_key", "copilot_api_key")
+SENSITIVE_CONFIG_KEYS = ("openai_api_key", "workflow_llm_api_key", "vision_llm_api_key", "copilot_api_key")
 
 
 def workflow_config_adapt(config: dict) -> dict:

@@ -96,3 +96,19 @@ describe("without a hosted server", () => {
     expect(headers["Openai-Base-Url"]).toBe("http://localhost:1234/v1");
   });
 });
+
+describe("provider settings", () => {
+  it("are sent to the local backend with chat requests", async () => {
+    localStorage.setItem("openaiBaseUrl", "http://localhost:11434/v1");
+    localStorage.setItem("llmProvider", "ollama");
+    localStorage.setItem("visionLLMModel", "qwen2.5vl:7b");
+    localStorage.setItem("copilotToolMode", "json");
+
+    await drain(WorkflowChatAPI.streamInvokeServer("s", "hello"));
+
+    const { headers } = requestTo("/api/chat/invoke");
+    expect(headers["Llm-Provider"]).toBe("ollama");
+    expect(headers["Vision-LLM-Model"]).toBe("qwen2.5vl:7b");
+    expect(headers["Copilot-Tool-Mode"]).toBe("json");
+  });
+});

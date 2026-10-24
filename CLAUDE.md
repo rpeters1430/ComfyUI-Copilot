@@ -61,7 +61,7 @@ Built on `openai-agents`, which is forced into chat-completions mode in `backend
 ### Request context and config
 - Per-request state (session_id, workflow_checkpoint_id, config, rewrite context) is stored in `contextvars` (`utils/request_context.py`). Tools and agents read it from there instead of taking parameters. Controllers must call `set_request_context(...)` before invoking agents.
 - Controllers build the config with `utils/request_utils.build_request_config`. Precedence is **request headers/body > `.env` > code defaults** (`apply_llm_env_defaults`). The `.env` file at the repo root is loaded by `utils/globals.py`; every variable is documented in `.env.example`.
-- Model resolution lives in `agent_factory.resolve_llm_settings`: `model_select`, then the call-site model, then `CC_DEFAULT_MODEL`, else it raises `LLMConfigurationError`, which is shown to the user. Workflow agents get their config from `key_utils.workflow_config_adapt`, which maps `workflow_llm_*` over the chat settings and keeps the chat model when no workflow model is set. Nothing defaults to the dead upstream server.
+- Model resolution lives in `utils/llm_settings.resolve_llm_settings`: `model_select`, then the call-site model, then `CC_DEFAULT_MODEL`, else it raises `LLMConfigurationError`, which is shown to the user. Workflow agents get their config from `key_utils.workflow_config_adapt`, which maps `workflow_llm_*` over the chat settings and keeps the chat model when no workflow model is set. Nothing defaults to the dead upstream server.
 - Credentials are request-scoped. The `Authorization` bearer token goes into `config["copilot_api_key"]`, and `get_comfyui_copilot_api_key()` reads the request context. Never put per-user values in `GlobalState`. Language is a contextvar too. Log configs through `key_utils.redact_config`.
 - openai-agents tracing, which uploads prompts and workflows to OpenAI, is off unless `COPILOT_ENABLE_TRACING=1`.
 
@@ -74,5 +74,17 @@ Built on `openai-agents`, which is forced into chat-completions mode in `backend
 - `ChatContext.tsx` holds chat state. `utils/comfyapp.ts` wraps the ComfyUI `app` and graph APIs. `utils/comfyuiWorkflowApi2Ui.ts` converts API-format workflows into UI format before they are loaded onto the canvas.
 - i18n strings live in the root `locales/{en,zh}/`. Many code comments and some docs are in Chinese. `README_CN.md` mirrors `README.md`, so update both when changing user-facing docs.
 
-### LMStudio
-See `LMSTUDIO_SETUP.md` / `LMSTUDIO_IMPLEMENTATION.md`. Local models are reached through the same OpenAI-compatible path, with an LMStudio URL entered as the base URL.
+### LLM providers and capability negotiation
+- **Inference** always goes through the provider's OpenAI-compatible endpoint. `backend/providers/` only adds **discovery**:
+  - `OpenAICompatibleProvider` uses `/v1/models`.
+  - `OllamaProvider` uses `/api/tags`, then `/api/show` for `capabilities` and `<arch>.context_length`, and `/api/ps` for the context of loaded models.
+  - `LMStudioProvider` tries `/api/v1/models` (vision and `trained_for_tool_use` flags), then `/api/v0/models`, then `/v1/models`. It only falls back on 404 or unexpected shapes; a down server fails once.
+  - Capabilities are `True`/`False`/`None`, where `None` means unknown and is treated permissively.
+- **Registry** (`registry.py`): `detect_kind` maps port 11434 to Ollama and 1234/1235 to LM Studio; an explicit `Llm-Provider` header wins. `discover_local` probes the default ports. `lookup_model` uses a 60-second cache and never raises. The routes are `/api/providers`, `/api/providers/discover` and `/api/providers/test` in `controller/provider_api.py`. `/api/model_config` reports real `image_enable`, `tools` and `context_length`.
+- **Negotiation** (`service/negotiation.py`, called at the start of `comfyui_agent_invoke`):
+  - Images go to a chat model only if it can see them. Otherwise `vision_llm_model` describes them, or they're replaced with a note.
+  - `resolve_tool_mode` picks the agent router, or `service/json_fallback.py` when the model reports no tool calling. `Copilot-Tool-Mode`/`COPILOT_TOOL_MODE` override it.
+  - The JSON fallback makes one `complete_json` decision (answer or `rewrite_workflow`), then uses `rewrite_workflow_simple`. It passes the canvas with input names and current values, because small models otherwise rename inputs (a live 7B run turned KSampler's `cfg` into `cfg_scale`).
+- `utils/structured_output.complete_json` tries `json_schema`, then `json_object`, then extracts JSON from plain text, and validates with Pydantic.
+- **Every canvas rewrite goes through `workflow_rewrite_tools.apply_workflow_update`**, which runs `utils/workflow_validation.validate_api_workflow` before saving. It checks dangling links and, using `/object_info`, uninstalled node types and missing or unknown inputs. Every two-element list counts as a link, as in ComfyUI. Invalid output is rejected and the saved workflow and canvas stay unchanged. The JSON fallback retries once, feeding the problems back to the model.
+- **UI:** `ui/src/components/providers/` has `ProviderSettings.tsx` (provider, Detect local, Test connection, workflow/vision model, tool mode) and `providerStorage.ts` (localStorage plus migration that infers the provider from an old `openaiBaseUrl`). Keep `providerStorage.ts` named differently from `ProviderSettings.tsx`: on Windows the two names collide case-insensitively.
