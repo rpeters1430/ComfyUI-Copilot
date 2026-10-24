@@ -40,27 +40,29 @@ except Exception:
     # Fail-open: never block plugin loading if aliasing fails
     pass
 
-import asyncio
-import server
-from aiohttp import web
-import folder_paths
-from .backend.controller.conversation_api import *
-from .backend.controller.llm_api import *
-from .backend.controller.expert_api import *
+import os
 
 WEB_DIRECTORY = "entry"
 NODE_CLASS_MAPPINGS = {}
 __all__ = ['NODE_CLASS_MAPPINGS']
-version = "V2.1.0"
 
-workspace_path = os.path.join(os.path.dirname(__file__))
-comfy_path = os.path.dirname(folder_paths.__file__)
-db_dir_path = os.path.join(workspace_path, "db")
 
-dist_path = os.path.join(workspace_path, 'dist/copilot_web')
-if os.path.exists(dist_path):
-    server.PromptServer.instance.app.add_routes([
-        web.static('/copilot_web/', dist_path),
-    ])
-else:
-    print(f"🦄🦄🔴🔴Error: Web directory not found: {dist_path}")
+def _register_with_comfyui():
+    import server
+    from aiohttp import web
+    # Importing the controllers registers their routes on PromptServer
+    from .backend.controller import conversation_api, llm_api, expert_api  # noqa: F401
+
+    dist_path = os.path.join(os.path.dirname(__file__), 'dist', 'copilot_web')
+    if os.path.exists(dist_path):
+        server.PromptServer.instance.app.add_routes([
+            web.static('/copilot_web/', dist_path),
+        ])
+    else:
+        print(f"🦄🦄🔴🔴Error: Web directory not found: {dist_path}")
+
+
+# ComfyUI imports this file as a package. Imported any other way (e.g. by pytest
+# while collecting the repo) there is no ComfyUI to register with.
+if __package__:
+    _register_with_comfyui()

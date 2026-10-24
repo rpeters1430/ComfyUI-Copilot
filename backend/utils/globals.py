@@ -11,6 +11,7 @@ Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查�
 Global utilities for managing application-wide state and configuration.
 """
 
+import contextvars
 import os
 import threading
 from typing import Optional, Dict, Any
@@ -71,15 +72,16 @@ def set_global(key: str, value: Any) -> None:
     """Set a global state value."""
     _global_state.set(key, value)
 
+# Request-scoped so concurrent requests in different languages don't overwrite each other
+_request_language: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('language', default=None)
+
 def get_language() -> str:
-    """Get the current language setting."""
-    language = _global_state.get_language()
-    if not language:
-        language = 'en'
-    return language
+    """Get the language for the current request (falls back to the last one set)."""
+    return _request_language.get() or _global_state.get_language() or 'en'
 
 def set_language(language: str) -> None:
-    """Set the current language setting."""
+    """Set the language for the current request."""
+    _request_language.set(language)
     _global_state.set_language(language)
 
 def update_globals(**kwargs) -> None:
@@ -91,28 +93,55 @@ def get_all_globals() -> Dict[str, Any]:
     return _global_state.get_all()
 
 def get_comfyui_copilot_api_key() -> Optional[str]:
-    """Get the ComfyUI Copilot API key."""
-    return _global_state.get('comfyui_copilot_api_key')
+    """Get the ComfyUI Copilot API key for the current request.
+
+    The key is request-scoped (stored in the request context config) so that
+    concurrent users never share each other's credentials. The process-wide
+    value is only a fallback for code running outside a request.
+    """
+    from .request_context import get_config
+    config = get_config() or {}
+    return config.get('copilot_api_key') or _global_state.get('comfyui_copilot_api_key')
 
 def set_comfyui_copilot_api_key(api_key: str) -> None:
     """Set the ComfyUI Copilot API key."""
     _global_state.set('comfyui_copilot_api_key', api_key)
 
 
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://comfyui-copilot-server.onrender.com")
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# The upstream hosted Copilot server has been suspended, so nothing defaults to it any more.
+# Set BACKEND_BASE_URL (or COPILOT_REMOTE_MCP_URL) only if you run a compatible server yourself.
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL") or None
+REMOTE_MCP_URL = os.getenv("COPILOT_REMOTE_MCP_URL") or (
+    f"{BACKEND_BASE_URL.rstrip('/')}/mcp-server/mcp" if BACKEND_BASE_URL else None
+)
+# Optional web-search MCP server (SSE). Disabled unless configured.
+SEARCH_MCP_URL = os.getenv("COPILOT_SEARCH_MCP_URL") or None
+SEARCH_MCP_API_KEY = os.getenv("COPILOT_SEARCH_MCP_API_KEY") or None
+MCP_CONNECT_TIMEOUT = float(os.getenv("COPILOT_MCP_CONNECT_TIMEOUT", "15"))
+
 LMSTUDIO_DEFAULT_BASE_URL = "http://localhost:1234/v1"
-WORKFLOW_MODEL_NAME = os.getenv("WORKFLOW_MODEL_NAME", "us.anthropic.claude-sonnet-4-20250514-v1:0")
-# WORKFLOW_MODEL_NAME = "gpt-5-2025-08-07-GlobalStandard"
-LLM_DEFAULT_BASE_URL = "https://comfyui-copilot-server.onrender.com/v1"
+LLM_DEFAULT_BASE_URL = os.getenv("CC_DEFAULT_BASE_URL") or "https://api.openai.com/v1"
+# Chat model used when the request does not select one.
+DEFAULT_CHAT_MODEL = os.getenv("CC_DEFAULT_MODEL") or None
+# Model for workflow agents (rewrite/debug). When unset, they reuse the chat model.
+WORKFLOW_MODEL_NAME = os.getenv("WORKFLOW_MODEL_NAME") or None
 
 # LLM-related env defaults (used as fallback when request config does not provide values)
 OPENAI_API_KEY = os.getenv("CC_OPENAI_API_KEY") or None
 OPENAI_BASE_URL = os.getenv("CC_OPENAI_BASE_URL") or None
 WORKFLOW_LLM_API_KEY = os.getenv("WORKFLOW_LLM_API_KEY") or None
 WORKFLOW_LLM_BASE_URL = os.getenv("WORKFLOW_LLM_BASE_URL") or None
-# If WORKFLOW_LLM_MODEL is not set, fall back to WORKFLOW_MODEL_NAME
 WORKFLOW_LLM_MODEL = os.getenv("WORKFLOW_LLM_MODEL") or WORKFLOW_MODEL_NAME
-DISABLE_WORKFLOW_GEN = os.getenv("DISABLE_WORKFLOW_GEN") or False
+DISABLE_WORKFLOW_GEN = _env_flag("DISABLE_WORKFLOW_GEN")
+# openai-agents tracing uploads run traces (prompts, workflows) to OpenAI. Opt-in only.
+ENABLE_TRACING = _env_flag("COPILOT_ENABLE_TRACING")
 
 TENANT_ID = os.getenv("TENANT_ID") or None
 

@@ -67,6 +67,13 @@ def message_memory_optimize(
         # 2. 更新消息列表（保存当前完整的消息）
         current_index = record['index']
         current_summary = record['summary']
+
+        # History shorter than what we already compressed means the client cleared or
+        # replaced the conversation; the old summary no longer applies.
+        if len(messages) <= current_index:
+            log.info(f"[Memory] History shrank below compressed index ({len(messages)} <= {current_index}), resetting")
+            save_session_message(session_id=session_id, messages=messages, index=0, summary=None)
+            return messages
         
         log.info(f"[Memory] Existing session - index: {current_index}, summary length: {len(current_summary) if current_summary else 0}")
         
@@ -104,6 +111,11 @@ def message_memory_optimize(
             previous_summary=current_summary
         )
         
+        if not new_summary:
+            # Keep the full history rather than replacing it with an empty/failed summary
+            log.warning("[Memory] Summary generation failed, skipping compression")
+            return _build_optimized_messages(current_summary, messages, current_index)
+
         log.info(f"[Memory] Generated new summary: {new_summary[:100]}...")
         
         # 更新数据库

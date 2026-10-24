@@ -1,21 +1,28 @@
-'''
-Author: ai-business-hql qingli.hql@alibaba-inc.com
-Date: 2025-07-14 16:46:20
-LastEditors: ai-business-hql ai.bussiness.hql@gmail.com
-LastEditTime: 2025-12-15 15:03:28
-FilePath: /comfyui_copilot/backend/controller/llm_api.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
 # Copyright (C) 2025 AIDC-AI
 # Licensed under the MIT License.
 
 import json
 from typing import List, Dict, Any
 from aiohttp import web
-from ..utils.globals import LLM_DEFAULT_BASE_URL, LMSTUDIO_DEFAULT_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, TENANT_ID, is_lmstudio_url
+from ..utils.globals import LLM_DEFAULT_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, TENANT_ID, is_lmstudio_url
 import server
-import requests
+import aiohttp
 from ..utils.logger import log
+
+MODELS_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+
+async def fetch_models(base_url: str, api_key: str):
+    """GET {base_url}/models. Returns (status, json_or_text)."""
+    headers = {}
+    # LMStudio usually runs without a key
+    if api_key or not is_lmstudio_url(base_url):
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with aiohttp.ClientSession(timeout=MODELS_REQUEST_TIMEOUT) as session:
+        async with session.get(f"{base_url.rstrip('/')}/models", headers=headers) as response:
+            if response.status == 200:
+                return response.status, await response.json(content_type=None)
+            return response.status, await response.text()
 
 
 @server.PromptServer.instance.routes.get("/api/model_config")
@@ -50,21 +57,10 @@ async def list_models(request):
         openai_api_key = request.headers.get('Openai-Api-Key') or OPENAI_API_KEY or ""
         openai_base_url = request.headers.get('Openai-Base-Url') or OPENAI_BASE_URL or LLM_DEFAULT_BASE_URL
 
-        request_url = f"{openai_base_url}/models"
-        
-        # Check if this is LMStudio and adjust headers accordingly
-        is_lmstudio = is_lmstudio_url(openai_base_url)
-        
-        headers = {}
-        if not is_lmstudio or (is_lmstudio and openai_api_key):
-            # Include Authorization header for OpenAI API or LMStudio with API key
-            headers["Authorization"] = f"Bearer {openai_api_key}"
-        
-        response = requests.get(request_url, headers=headers)
+        status, models = await fetch_models(openai_base_url, openai_api_key)
         llm_config = []
-        if response.status_code == 200:
-            models = response.json()
-            for model in models['data']:
+        if status == 200:
+            for model in models.get('data', []):
                 llm_config.append({
                     "label": model['id'],
                     "name": model['id'],
@@ -92,12 +88,10 @@ async def verify_openai_key(req):
     Returns:
         JSON response with success status and message
     """
+    openai_api_key = req.headers.get('Openai-Api-Key')
+    openai_base_url = req.headers.get('Openai-Base-Url') or LLM_DEFAULT_BASE_URL
+    is_lmstudio = is_lmstudio_url(openai_base_url)
     try:
-        openai_api_key = req.headers.get('Openai-Api-Key')
-        openai_base_url = req.headers.get('Openai-Base-Url', 'https://api.openai.com/v1')
-        
-        # Check if this is LMStudio
-        is_lmstudio = is_lmstudio_url(openai_base_url)
         
         # For LMStudio, API key might not be required
         if not openai_api_key and not is_lmstudio:
@@ -106,18 +100,9 @@ async def verify_openai_key(req):
                 "message": "No API key provided"
             })
         
-        # Use a direct HTTP request instead of the OpenAI client
-        # This gives us more control over the request method and error handling
-        headers = {}
-        if not is_lmstudio or (is_lmstudio and openai_api_key):
-            # Include Authorization header for OpenAI API or LMStudio with API key
-            headers["Authorization"] = f"Bearer {openai_api_key}"
-        
-        # Make a simple GET request to the models endpoint
-        response = requests.get(f"{openai_base_url}/models", headers=headers)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
+        status, body = await fetch_models(openai_base_url, openai_api_key or "")
+
+        if status == 200:
             success_message = "API key is valid" if not is_lmstudio else "LMStudio connection successful"
             return web.json_response({
                 "success": True, 
@@ -125,10 +110,10 @@ async def verify_openai_key(req):
                 "message": success_message
             })
         else:
-            log.error(f"API validation failed with status code: {response.status_code}")
-            error_message = f"Invalid API key: HTTP {response.status_code} - {response.text}"
+            log.error(f"API validation failed with status code: {status}")
+            error_message = f"Invalid API key: HTTP {status} - {body}"
             if is_lmstudio:
-                error_message = f"LMStudio connection failed: HTTP {response.status_code} - {response.text}"
+                error_message = f"LMStudio connection failed: HTTP {status} - {body}"
             return web.json_response({
                 "success": False, 
                 "data": False,
@@ -137,9 +122,7 @@ async def verify_openai_key(req):
             
     except Exception as e:
         log.error(f"Error verifying API key/connection: {str(e)}")
-        error_message = f"Invalid API key: {str(e)}"
-        if 'base_url' in locals() and is_lmstudio_url(locals().get('openai_base_url', '')):
-            error_message = f"LMStudio connection error: {str(e)}"
+        error_message = f"LMStudio connection error: {e}" if is_lmstudio else f"Invalid API key: {e}"
         return web.json_response({
             "success": False, 
             "data": False, 

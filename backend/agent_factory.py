@@ -21,78 +21,61 @@ except Exception:
         "  python -m pip install -U openai-agents\n\n"
         "Alternatively, keep both by setting COMFYUI_COPILOT_PREFER_OPENAI_AGENTS=1 so this plugin prefers openai-agents."
     )
-from dotenv import dotenv_values
-from .utils.globals import LLM_DEFAULT_BASE_URL, LMSTUDIO_DEFAULT_BASE_URL, get_comfyui_copilot_api_key, is_lmstudio_url
+from .utils.globals import (
+    LLM_DEFAULT_BASE_URL,
+    DEFAULT_CHAT_MODEL,
+    ENABLE_TRACING,
+    get_comfyui_copilot_api_key,
+    is_lmstudio_url,
+)
 from openai import AsyncOpenAI
 
-
-from agents._config import set_default_openai_api
-from agents.tracing import set_tracing_disabled
-import asyncio
-# from .utils.logger import log
-
-# def load_env_config():
-#     """Load environment variables from .env.llm file"""
-#     from dotenv import load_dotenv
-
-#     env_file_path = os.path.join(os.path.dirname(__file__), '.env.llm')
-#     if os.path.exists(env_file_path):
-#         load_dotenv(env_file_path)
-#         log.info(f"Loaded environment variables from {env_file_path}")
-#     else:
-#         log.warning(f"Warning: .env.llm not found at {env_file_path}")
-
-
-# # Load environment configuration
-# load_env_config()
-
 set_default_openai_api("chat_completions")
-set_tracing_disabled(False)
+set_tracing_disabled(not ENABLE_TRACING)
+
+
+class LLMConfigurationError(ValueError):
+    """Raised when no usable model/endpoint can be resolved for an agent."""
+
+
+def resolve_llm_settings(config: dict | None, model: str | None = None) -> tuple[str, str, str]:
+    """Resolve (base_url, api_key, model_name) for an agent.
+
+    Precedence for the model: the request's model_select, then the call-site
+    ``model``, then the CC_DEFAULT_MODEL env var.
+    """
+    config = config or {}
+    base_url = config.get("openai_base_url") or LLM_DEFAULT_BASE_URL
+    api_key = config.get("openai_api_key") or get_comfyui_copilot_api_key() or ""
+
+    # LMStudio typically doesn't require an API key, use a placeholder
+    if not api_key and is_lmstudio_url(base_url):
+        api_key = "lmstudio-local"
+
+    model_name = config.get("model_select") or model or DEFAULT_CHAT_MODEL
+    if not model_name:
+        raise LLMConfigurationError(
+            "No model selected. Choose a model in the Copilot settings, or set "
+            "CC_DEFAULT_MODEL in ComfyUI-Copilot/.env."
+        )
+    return base_url, api_key, model_name
 
 
 def create_agent(**kwargs) -> Agent:
     # 通过用户配置拿/环境变量
-    config = kwargs.pop("config") if "config" in kwargs else {}
-    # 避免将 None 写入 headers
-    session_id = (config or {}).get("session_id")
-    default_headers = {}
-    if session_id:
-        default_headers["X-Session-ID"] = session_id
+    config = kwargs.pop("config", None) or {}
+    session_id = config.get("session_id")
+    default_headers = {"X-Session-ID": session_id} if session_id else {}
 
-    # Determine base URL and API key
-    base_url = LLM_DEFAULT_BASE_URL
-    api_key = get_comfyui_copilot_api_key() or ""
-
-    if config:
-        if config.get("openai_base_url") and config.get("openai_base_url") != "":
-            base_url = config.get("openai_base_url")
-        if config.get("openai_api_key") and config.get("openai_api_key") != "":
-            api_key = config.get("openai_api_key")
-
-    # Check if this is LMStudio and adjust API key handling
-    is_lmstudio = is_lmstudio_url(base_url)
-    if is_lmstudio and not api_key:
-        # LMStudio typically doesn't require an API key, use a placeholder
-        api_key = "lmstudio-local"
+    base_url, api_key, model_name = resolve_llm_settings(config, kwargs.pop("model", None))
 
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
         default_headers=default_headers,
     )
-
-    # Determine model with proper precedence:
-    # 1) Explicit selection from config (model_select from frontend)
-    # 2) Explicit kwarg 'model' (call-site override)
-    model_from_config = (config or {}).get("model_select")
-    model_from_kwargs = kwargs.pop("model", None)
-
-    model_name = model_from_config or model_from_kwargs or "gemini-2.5-flash"
     model = OpenAIChatCompletionsModel(model_name, openai_client=client)
 
-    # Safety: ensure no stray 'model' remains in kwargs to avoid duplicate kwarg errors
-    kwargs.pop("model", None)
-
     if config.get("max_tokens"):
-        return Agent(model=model, model_settings=ModelSettings(max_tokens=config.get("max_tokens") or 8192), **kwargs)
+        return Agent(model=model, model_settings=ModelSettings(max_tokens=config["max_tokens"]), **kwargs)
     return Agent(model=model, **kwargs)

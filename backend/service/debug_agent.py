@@ -726,13 +726,10 @@ async def test_debug():
         }
     }
     
-    config = {
-        "session_id": "test_session_123",
-        "model": WORKFLOW_MODEL_NAME,
-        "max_tokens": 8192
-    }
-    
-    async for text, ext in debug_workflow_errors(test_workflow_data, config):
+    from ..utils.request_context import set_request_context
+    set_request_context("test_session_123", None, {"session_id": "test_session_123", "max_tokens": 8192})
+
+    async for text, ext in debug_workflow_errors(test_workflow_data):
         log.info(f"Stream output: {text[-100:] if len(text) > 100 else text}")  # Print last 100 chars
         if ext:
             log.info(f"Ext data: {ext}")
