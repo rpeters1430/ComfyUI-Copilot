@@ -5,13 +5,13 @@ Uses contextvars to provide request-scoped context variables with async safety
 
 import contextvars
 from typing import Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RewriteContext(BaseModel):
     rewrite_intent: str = ""
     current_workflow: str = ""
-    node_infos: Optional[Dict[str, Any]] = None
+    node_infos: Dict[str, Any] = Field(default_factory=dict)
     rewrite_expert: Optional[str] = ""
 
 # Define context variables

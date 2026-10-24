@@ -8,15 +8,11 @@ from typing import Optional, TypedDict, List, Union
 import threading
 from collections import defaultdict
 
-from sqlalchemy.orm import identity
-
 from ..utils.globals import set_language, apply_llm_env_defaults
-from ..utils.auth_utils import extract_and_store_api_key
+from ..utils.auth_utils import extract_api_key
+from ..utils.key_utils import redact_config
 import server
 from aiohttp import web
-import base64
-
-# Import the MCP client function
 import os
 import shutil
 
@@ -39,6 +35,51 @@ def get_llm_config_from_headers(request):
         "workflow_llm_base_url": request.headers.get('Workflow-LLM-Base-Url'),
         "workflow_llm_model": request.headers.get('Workflow-LLM-Model'),
     }
+
+
+def build_request_config(request, session_id, **extra):
+    """Request-scoped LLM config: request headers/body > .env > code defaults."""
+    config = {
+        "session_id": session_id,
+        "copilot_api_key": extract_api_key(request),
+        **get_llm_config_from_headers(request),
+        **extra,
+    }
+    return apply_llm_env_defaults(config)
+
+
+def get_model_select(ext) -> Optional[str]:
+    for item in ext or []:
+        if isinstance(item, dict) and item.get('type') == 'model_select' and item.get('data'):
+            return item['data'][0]
+    return None
+
+
+async def read_json(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def resolve_model_dest_dir(dest_dir: Optional[str], model_type: str) -> str:
+    """Directory a downloaded model goes to; always inside ComfyUI's models dir."""
+    models_root = os.path.realpath(folder_paths.models_dir)
+    if dest_dir:
+        candidate = os.path.realpath(os.path.join(models_root, dest_dir))
+    else:
+        try:
+            paths = folder_paths.get_folder_paths(model_type)
+        except Exception:
+            paths = []
+        # Configured folders (extra_model_paths.yaml) may live outside models/, which is fine
+        if paths:
+            return paths[0]
+        candidate = os.path.realpath(os.path.join(models_root, model_type))
+    if os.path.commonpath([models_root, candidate]) != models_root:
+        raise ValueError(f"Destination must be inside the models directory: {dest_dir or model_type}")
+    return candidate
 
 
 # 全局下载进度存储
@@ -175,57 +216,13 @@ def generate_download_id() -> str:
     import uuid
     return str(uuid.uuid4())
 
-async def upload_to_oss(file_data: bytes, filename: str) -> str:
-    # TODO: Implement your OSS upload logic here
-    # For now, save locally and return a placeholder URL
-    
-    try:
-        # Create uploads directory if it doesn't exist
-        uploads_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'uploads')
-        os.makedirs(uploads_dir, exist_ok=True)
-        
-        # Generate unique filename to avoid conflicts
-        import uuid
-        unique_filename = f"{uuid.uuid4().hex}_{filename}"
-        file_path = os.path.join(uploads_dir, unique_filename)
-        
-        # Save file locally
-        with open(file_path, 'wb') as f:
-            f.write(file_data)
-        
-        # Return a local URL or base64 data URL for now
-        # In production, replace this with actual OSS URL
-        base64_data = base64.b64encode(file_data).decode('utf-8')
-        # Determine MIME type based on file extension
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-            mime_type = f"image/{filename.split('.')[-1].lower()}"
-            if mime_type == "image/jpg":
-                mime_type = "image/jpeg"
-        else:
-            mime_type = "image/jpeg"  # Default
-            
-        return f"data:{mime_type};base64,{base64_data}"
-        
-    except Exception as e:
-        log.error(f"Error uploading file {filename}: {str(e)}")
-        # Return original base64 data if upload fails
-        base64_data = base64.b64encode(file_data).decode('utf-8')
-        return f"data:image/jpeg;base64,{base64_data}"
-
-# 关联用户消息和AI响应的checkpoint信息
-def processMessagesWithCheckpoints(messages):
-    # ... existing code ...
-    pass
-
 @server.PromptServer.instance.routes.post("/api/chat/invoke")
 async def invoke_chat(request):
     log.info("Received invoke_chat request")
-    
-    # Extract and store API key from Authorization header
-    extract_and_store_api_key(request)
-    
-    req_json = await request.json()
-    log.info("Request JSON:", req_json)
+
+    req_json = await read_json(request)
+    if req_json is None:
+        return web.json_response({"success": False, "message": "Invalid JSON body"}, status=400)
 
     response = web.StreamResponse(
         status=200,
@@ -249,15 +246,12 @@ async def invoke_chat(request):
     language = request.headers.get('Accept-Language', 'en')
     set_language(language)
     
-    # 构建配置信息
-    config = {
-        "session_id": session_id,
-        "workflow_checkpoint_id": workflow_checkpoint_id,
-        **get_llm_config_from_headers(request),
-        "model_select": next((x['data'][0] for x in ext if x['type'] == 'model_select' and x.get('data')), None)
-    }
-    # Apply .env-based defaults for LLM-related fields (config > .env > code defaults)
-    config = apply_llm_env_defaults(config)
+    config = build_request_config(
+        request,
+        session_id,
+        workflow_checkpoint_id=workflow_checkpoint_id,
+        model_select=get_model_select(ext),
+    )
     
     # 设置请求上下文 - 这里建立context隔离
     set_request_context(session_id, workflow_checkpoint_id, config)
@@ -292,7 +286,7 @@ async def invoke_chat(request):
         has_sent_response = False
         previous_text_length = 0
         
-        log.info(f"config: {config}")
+        log.info(f"config: {redact_config(config)}")
         
         # Pass messages in OpenAI format (images are now included in messages)
         # Config is now available through request context
@@ -369,7 +363,9 @@ async def save_workflow_checkpoint(request):
     Save workflow checkpoint for restore functionality
     """
     log.info("Received save-workflow-checkpoint request")
-    req_json = await request.json()
+    req_json = await read_json(request)
+    if req_json is None:
+        return web.json_response({"success": False, "message": "Invalid JSON body"}, status=400)
     
     try:
         session_id = req_json.get('session_id')
@@ -497,11 +493,10 @@ async def invoke_debug(request):
     Debug agent endpoint for analyzing ComfyUI workflow errors
     """
     log.info("Received debug-agent request")
-    
-    # Extract and store API key from Authorization header
-    extract_and_store_api_key(request)
-    
-    req_json = await request.json()
+
+    req_json = await read_json(request)
+    if req_json is None:
+        return web.json_response({"success": False, "message": "Invalid JSON body"}, status=400)
     
     response = web.StreamResponse(
         status=200,
@@ -516,14 +511,9 @@ async def invoke_debug(request):
     session_id = req_json.get('session_id')
     workflow_data = req_json.get('workflow_data')
     
-    # Get configuration from headers (OpenAI settings)
-    config = {
-        "session_id": session_id,
-        "model": "gemini-2.5-flash",  # Default model for debug agents
-        **get_llm_config_from_headers(request),
-    }
-    # Apply .env-based defaults for LLM-related fields (config > .env > code defaults)
-    config = apply_llm_env_defaults(config)
+    # Debug agents use the workflow model (Workflow-LLM-Model header / WORKFLOW_LLM_MODEL),
+    # falling back to the chat model if the client sends one.
+    config = build_request_config(request, session_id, model_select=req_json.get('model_select'))
 
     # 获取当前语言
     language = request.headers.get('Accept-Language', 'en')
@@ -532,7 +522,7 @@ async def invoke_debug(request):
     # 设置请求上下文 - 为debug请求建立context隔离
     set_request_context(session_id, None, config)
     
-    log.info(f"Debug agent config: {config}")
+    log.info(f"Debug agent config: {redact_config(config)}")
     log.info(f"Session ID: {session_id}")
     log.info(f"Workflow nodes: {list(workflow_data.keys()) if workflow_data else 'None'}")
 
@@ -690,7 +680,9 @@ async def update_workflow_ui(request):
     Update workflow_data_ui field for a specific checkpoint without affecting other fields
     """
     log.info("Received update-workflow-ui request")
-    req_json = await request.json()
+    req_json = await read_json(request)
+    if req_json is None:
+        return web.json_response({"success": False, "message": "Invalid JSON body"}, status=400)
     
     try:
         checkpoint_id = req_json.get('checkpoint_id')
@@ -738,8 +730,10 @@ async def download_model(request):
     Download model from ModelScope using SDK
     """
     log.info("Received download-model request")
-    req_json = await request.json()
-    
+    req_json = await read_json(request)
+    if req_json is None:
+        return web.json_response({"success": False, "message": "Invalid JSON body"}, status=400)
+
     try:
         id = req_json.get('id')
         model_id = req_json.get('model_id')
@@ -767,19 +761,12 @@ async def download_model(request):
         
         log.info(f"Downloading model: {model_id} (type: {model_type})")
         
-        # 生成下载ID
+        try:
+            resolved_dest_dir = resolve_model_dest_dir(dest_dir, model_type)
+        except ValueError as e:
+            return web.json_response({"success": False, "message": str(e)}, status=400)
+
         download_id = generate_download_id()
-        
-        # 计算目标目录：优先使用传入的dest_dir，否则使用ComfyUI的models目录下对应类型
-        resolved_dest_dir = None
-        if dest_dir:
-            resolved_dest_dir = os.path.abspath(os.path.expanduser(f"models/{dest_dir}"))
-        else:
-            try:
-                model_type_paths = folder_paths.get_folder_paths(model_type)
-                resolved_dest_dir = model_type_paths[0] if model_type_paths else os.path.join(folder_paths.models_dir, model_type)
-            except Exception:
-                resolved_dest_dir = os.path.join(folder_paths.models_dir, model_type)
 
         # 创建进度回调
         progress_callback = DownloadProgressCallback(

@@ -26,6 +26,12 @@ class LocationFormatter(logging.Formatter):
         return super().format(record)
 
 
+def _console_level():
+    # COPILOT_LOG_LEVEL=DEBUG brings back the very verbose console output
+    name = (os.getenv("COPILOT_LOG_LEVEL") or "INFO").upper()
+    return getattr(logging, name, logging.INFO)
+
+
 def setup_logger():
     """Setup the main logger with console and file handlers."""
     # Create logger
@@ -52,7 +58,7 @@ def setup_logger():
             console_handler = logging.StreamHandler(console_stream)
         except Exception:
             console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.DEBUG)
+    console_handler.setLevel(_console_level())
     
     # Console formatter with colors (simple format for better compatibility)
     console_format = '%(asctime)s | %(levelname)-8s | %(location)s | %(message)s'

@@ -8,12 +8,13 @@ Description: Summary agent for compressing conversation history
 '''
 
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from openai import OpenAI
 
 from ..utils.key_utils import workflow_config_adapt
-from ..utils.globals import WORKFLOW_MODEL_NAME, get_comfyui_copilot_api_key, LLM_DEFAULT_BASE_URL
+from ..utils.globals import WORKFLOW_MODEL_NAME
+from ..agent_factory import resolve_llm_settings
 from ..utils.request_context import get_config
 from ..utils.logger import log
 
@@ -25,7 +26,7 @@ class SummaryResponse(BaseModel):
     summary: str
 
 
-def generate_summary(messages: List[Dict[str, Any]], previous_summary: str = None) -> str:
+def generate_summary(messages: List[Dict[str, Any]], previous_summary: str = None) -> Optional[str]:
     """
     生成对话历史摘要
     
@@ -89,13 +90,8 @@ Keep summaries factual, objective, and efficient."""
         config = get_config() or {}
 
         # 创建OpenAI客户端
-        client = OpenAI(
-            base_url=config.get("openai_base_url") or LLM_DEFAULT_BASE_URL,
-            api_key=config.get("openai_api_key") or get_comfyui_copilot_api_key() or ""
-        )
-
-        # 确定使用的模型，如果没有指定则使用默认模型
-        model_name = config.get("model_select") or WORKFLOW_MODEL_NAME
+        base_url, api_key, model_name = resolve_llm_settings(config, WORKFLOW_MODEL_NAME)
+        client = OpenAI(base_url=base_url, api_key=api_key)
 
         log.info(f"Generating summary with model: {model_name}")
 
@@ -131,19 +127,13 @@ Keep summaries factual, objective, and efficient."""
 
         log.info(f"Generated summary: {summary_text[:100]}..." if summary_text else "Generated empty summary")
 
-        if summary_text:
-            return summary_text
-        else:
+        if not summary_text:
             log.warning("Summary generation returned empty result")
-            return ""
+        return summary_text or None
 
     except Exception as e:
         log.error(f"Failed to generate summary: {str(e)}")
-        # 返回一个简单的回退摘要
-        fallback = f"Conversation with {len(messages)} messages"
-        if previous_summary:
-            fallback = f"{previous_summary} | {fallback}"
-        return fallback
+        return None
 
 
 def test_summary_agent():

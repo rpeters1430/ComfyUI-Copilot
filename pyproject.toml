@@ -12,3 +12,9 @@ Repository = "https://github.com/AIDC-AI/ComfyUI-Copilot"
 PublisherId = "yx9966"
 DisplayName = "ComfyUI-Copilot"
 Icon = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The repo root is itself a package (ComfyUI loads __init__.py); don't let pytest import it.
+addopts = "--import-mode=importlib"
+filterwarnings = ["ignore::DeprecationWarning", "ignore:.*SQLAlchemy 2.0.*"]
